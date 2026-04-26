@@ -253,19 +253,22 @@ async function generateRoomSummary(archive: RoomArchive, targetLang: string): Pr
 
 Rules:
 - Write the entire response in ${targetLangName}.
-- Write for a normal person who may not understand technical details.
+- Write for a normal person with little or no technical background.
+- Explain important technical concepts inside the summary and key points using plain everyday language.
+- If a concept has to be named, briefly define it the first time it appears.
+- Avoid unexplained jargon, acronyms, and specialist shorthand.
 - Produce a logically correct summary, not a raw transcript recap.
 - Speech recognition may mishear technical terms. Resolve likely misheard words using the full conversation context.
 - If an earlier word conflicts with later context, prefer the interpretation that makes technical sense. Example: if "GPS pins" appears near "ESP32", "input/output", "control devices", or "GPIO", summarize it as GPIO pins and do not mention GPS unless location/navigation was clearly discussed.
 - Do not preserve contradictions, impossible claims, or obvious transcription mistakes in the summary. Correct them silently when context is strong.
 - If the correct meaning is uncertain, say it was unclear instead of presenting a questionable fact.
 - Do not invent new facts beyond the conversation.
-- Separate what happened from useful follow-up questions.
+- Do not include follow-up questions. This summary is read after the meeting is done.
 - If the conversation includes professional topics like medical, legal, or financial issues, do not give advice; suggest questions to ask a qualified professional.
 - Return ONLY valid JSON — no markdown, no surrounding text.
 
 Response schema:
-{"simple_summary":"<short simple paragraph>","key_points":["<point>"],"suggested_follow_up_questions":["<question>"]}`,
+{"simple_summary":"<short plain-language paragraph that explains technical concepts>","key_points":["<plain-language point with any needed concept explained>"],"suggested_follow_up_questions":[]}`,
     messages: [{
       role: 'user',
       content: `Room code: ${archive.room_code}\n\nTranscript:\n${transcriptForPrompt(archive)}\n\nTechnical notes already detected:\n${JSON.stringify(archive.technical_notes.slice(-12))}`,
@@ -280,7 +283,7 @@ Response schema:
     language: targetLang,
     simple_summary: String(result.simple_summary || 'No summary is available yet.'),
     key_points: (result.key_points ?? []).map(String).filter(Boolean).slice(0, 8),
-    suggested_follow_up_questions: (result.suggested_follow_up_questions ?? []).map(String).filter(Boolean).slice(0, 8),
+    suggested_follow_up_questions: [],
     updated_at: Date.now(),
     transcript_count: archive.transcript.length,
   };
@@ -519,6 +522,7 @@ async function handleSummaryRequest(roomCode: string, targetLang: string) {
     summary: updatedArchive.summaries?.[targetLang] ?? summary ?? null,
     technical_notes: updatedArchive.technical_notes,
     follow_up_questions: updatedArchive.follow_up_questions,
+    transcript: updatedArchive.transcript,
     transcript_count: updatedArchive.transcript.length,
     updated_at: updatedArchive.updated_at,
   } : null;

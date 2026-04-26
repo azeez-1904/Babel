@@ -14,6 +14,172 @@ function generateCode(): string {
   return Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
 }
 
+function downloadBlob(filename: string, type: string, content: BlobPart) {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function languageLabel(code: string) {
+  return LANGUAGES.find(language => language.code === code)?.label ?? code;
+}
+
+function speakerLabel(userId: string, speakerNames: Map<string, string>) {
+  const existing = speakerNames.get(userId);
+  if (existing) return existing;
+
+  const label = `Speaker ${speakerNames.size + 1}`;
+  speakerNames.set(userId, label);
+  return label;
+}
+
+function transcriptText(result: RoomSummaryResponse, includeTitle = true) {
+  const speakerNames = new Map<string, string>();
+  const lines = includeTitle
+    ? [
+        `Babel transcript for room ${result.room_code}`,
+        `Exported: ${new Date().toLocaleString()}`,
+        '',
+      ]
+    : [
+        `Exported: ${new Date().toLocaleString()}`,
+        '',
+      ];
+
+  if (result.summary) {
+    lines.push('Room Summary', result.summary.simple_summary, '');
+  }
+
+  lines.push('Conversation Transcript');
+  lines.push('The conversation starts below. Each entry shows who spoke, when they spoke, what they said, and any translations.');
+  lines.push('');
+
+  if (result.transcript.length === 0) {
+    lines.push('No conversation transcript was saved for this room.');
+  } else {
+    for (const entry of result.transcript) {
+      lines.push(`${speakerLabel(entry.from_user, speakerNames)} - ${new Date(entry.timestamp).toLocaleString()}`);
+      lines.push(`Said: ${entry.original_text}`);
+      for (const translation of entry.translations) {
+        lines.push(`${languageLabel(translation.target_lang)} translation: ${translation.translated_text}`);
+      }
+      lines.push('');
+    }
+  }
+
+  return lines.join('\n');
+}
+
+function wrapCanvasText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number) {
+  const wrapped: string[] = [];
+  for (const paragraph of text.split('\n')) {
+    if (!paragraph.trim()) {
+      wrapped.push('');
+      continue;
+    }
+
+    const words = paragraph.split(/\s+/);
+    let line = '';
+    for (const word of words) {
+      const testLine = line ? `${line} ${word}` : word;
+      if (ctx.measureText(testLine).width <= maxWidth) {
+        line = testLine;
+      } else {
+        if (line) wrapped.push(line);
+        line = word;
+      }
+    }
+    if (line) wrapped.push(line);
+  }
+  return wrapped;
+}
+
+async function downloadTranscriptPdf(result: RoomSummaryResponse, text: string, baseName: string) {
+  const { jsPDF } = await import('jspdf');
+  const pdf = new jsPDF({ unit: 'pt', format: 'letter' });
+  const pageWidth = 612;
+  const pageHeight = 792;
+  const scale = 2;
+  const margin = 44;
+  const lineHeight = 18;
+  const canvas = document.createElement('canvas');
+  canvas.width = pageWidth * scale;
+  canvas.height = pageHeight * scale;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  const drawPage = (lines: string[], pageIndex: number) => {
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(0, 0, pageWidth, pageHeight);
+
+    let y = margin;
+    if (pageIndex === 0) {
+      ctx.fillStyle = '#111111';
+      ctx.font = '700 22px Arial, sans-serif';
+      ctx.fillText(`Babel transcript: ${result.room_code}`, margin, y);
+      y += 34;
+    }
+
+    ctx.font = '14px Arial, "Noto Sans", "Noto Sans Devanagari", "Noto Sans JP", sans-serif';
+    ctx.fillStyle = '#222222';
+    for (const line of lines) {
+      if (line === 'Room Summary' || line === 'Conversation Transcript') {
+        ctx.font = '700 15px Arial, sans-serif';
+        y += 6;
+      } else {
+        ctx.font = '14px Arial, "Noto Sans", "Noto Sans Devanagari", "Noto Sans JP", sans-serif';
+      }
+      ctx.fillText(line, margin, y);
+      y += line ? lineHeight : lineHeight * 0.75;
+    }
+
+    const image = canvas.toDataURL('image/jpeg', 0.95);
+    if (pageIndex > 0) pdf.addPage();
+    pdf.addImage(image, 'JPEG', 0, 0, pageWidth, pageHeight);
+  };
+
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+  ctx.font = '14px Arial, "Noto Sans", "Noto Sans Devanagari", "Noto Sans JP", sans-serif';
+  const lines = wrapCanvasText(ctx, text, pageWidth - margin * 2);
+  const firstPageCapacity = Math.floor((pageHeight - margin * 2 - 34) / lineHeight);
+  const nextPageCapacity = Math.floor((pageHeight - margin * 2) / lineHeight);
+  let pageIndex = 0;
+  let cursor = 0;
+
+  while (cursor < lines.length) {
+    const capacity = pageIndex === 0 ? firstPageCapacity : nextPageCapacity;
+    drawPage(lines.slice(cursor, cursor + capacity), pageIndex);
+    cursor += capacity;
+    pageIndex += 1;
+  }
+
+  pdf.save(`${baseName}.pdf`);
+}
+
+async function downloadTranscript(result: RoomSummaryResponse, format: 'pdf' | 'txt' | 'json') {
+  const baseName = `babel-${result.room_code}-transcript`;
+
+  if (format === 'json') {
+    downloadBlob(`${baseName}.json`, 'application/json', JSON.stringify(result, null, 2));
+    return;
+  }
+
+  const text = transcriptText(result);
+  if (format === 'txt') {
+    downloadBlob(`${baseName}.txt`, 'text/plain;charset=utf-8', text);
+    return;
+  }
+
+  await downloadTranscriptPdf(result, transcriptText(result, false), baseName);
+}
+
 // Warm gradient mesh backdrop
 function GradientBackdrop() {
   return (
@@ -430,7 +596,7 @@ export function HeroScreen({ onStart, wsStatus }: Props) {
         {mode === 'summary' && (
           <motion.div
             key="summary"
-            className="relative z-10 flex flex-col items-center w-full max-w-sm"
+            className="relative z-10 flex flex-col w-full h-full max-w-6xl px-4 sm:px-8 py-4 sm:py-8 overflow-y-auto"
             initial={{ opacity: 0, y: 24 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -16 }}
@@ -438,7 +604,7 @@ export function HeroScreen({ onStart, wsStatus }: Props) {
           >
             <button
               onClick={() => { setMode('home'); setError(''); setSummaryResult(null); }}
-              className="self-start mb-8 flex items-center gap-1.5 text-charcoal/50 active:opacity-60"
+              className="self-start mb-5 flex items-center gap-1.5 text-charcoal/50 active:opacity-60"
               style={{ fontFamily: 'DM Sans', fontSize: '0.875rem' }}
             >
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -447,129 +613,168 @@ export function HeroScreen({ onStart, wsStatus }: Props) {
               Back
             </button>
 
-            <h2 style={{ fontFamily: 'Fraunces, serif', fontSize: '2rem', fontWeight: 300 }}
-                className="mb-2 text-center text-ink">
-              Room summary
-            </h2>
-            <p className="text-charcoal/50 text-sm mb-6 text-center" style={{ fontFamily: 'DM Sans' }}>
-              Enter a room code to view the saved simple-language summary.
-            </p>
+            <div className="grid gap-6 lg:grid-cols-[minmax(280px,360px)_1fr] items-start flex-1 min-h-0">
+              <aside className="rounded-[2rem] p-5 sm:p-6 lg:sticky lg:top-0"
+                     style={{ background: 'rgba(255,255,255,0.68)', border: '1px solid rgba(42,42,42,0.08)', backdropFilter: 'blur(10px)' }}>
+                <h2 style={{ fontFamily: 'Fraunces, serif', fontSize: 'clamp(2rem, 5vw, 3rem)', fontWeight: 300 }}
+                    className="mb-2 text-ink">
+                  Room summary
+                </h2>
+                <p className="text-charcoal/50 text-sm mb-6 leading-relaxed" style={{ fontFamily: 'DM Sans' }}>
+                  Enter a room code to view the saved simple-language summary and download the transcript.
+                </p>
 
-            <div className="w-full mb-4">
-              <label className="block text-xs uppercase tracking-widest text-charcoal/40 mb-2 text-center"
-                     style={{ fontFamily: 'DM Sans', fontSize: '0.65rem' }}>
-                Summary language
-              </label>
-              <div className="relative">
-                <select
-                  value={lang}
-                  onChange={e => {
-                    setLang(e.target.value);
-                    setSummaryResult(null);
-                  }}
-                  className="w-full appearance-none rounded-2xl border border-fog text-charcoal text-center
-                             py-3.5 px-4 text-base cursor-pointer outline-none focus:border-coral/60"
-                  style={{ background: 'rgba(255,255,255,0.7)', fontFamily: 'DM Sans' }}
-                >
-                  {LANGUAGES.map(l => (
-                    <option key={l.code} value={l.code}>{l.flag} {l.label}</option>
-                  ))}
-                </select>
-                <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-charcoal/40">
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                    <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </div>
-              </div>
-            </div>
-
-            <div className="w-full mb-4">
-              <input
-                ref={inputRef}
-                type="text"
-                value={summaryCode}
-                onChange={e => setSummaryCode(e.target.value.toUpperCase().slice(0, 6))}
-                onKeyDown={e => e.key === 'Enter' && handleSummaryLookup()}
-                placeholder="ABCD"
-                maxLength={6}
-                className="w-full rounded-2xl border border-fog text-charcoal text-center
-                           py-4 px-4 text-2xl tracking-[0.3em] font-medium outline-none
-                           transition-all focus:border-coral/60 focus:ring-2 focus:ring-coral/15"
-                style={{
-                  background: 'rgba(255,255,255,0.7)',
-                  fontFamily: 'DM Sans, monospace',
-                  backdropFilter: 'blur(8px)',
-                }}
-                autoCapitalize="characters"
-                autoCorrect="off"
-                spellCheck={false}
-              />
-              {error && (
-                <p className="text-red-400 text-sm text-center mt-2" style={{ fontFamily: 'DM Sans' }}>{error}</p>
-              )}
-            </div>
-
-            <button
-              onClick={handleSummaryLookup}
-              disabled={summaryLoading}
-              className="w-full py-4 rounded-2xl text-white font-medium text-base transition-all active:scale-[0.97] disabled:opacity-60"
-              style={{
-                background: 'linear-gradient(135deg, #E8744C 0%, #D4973A 100%)',
-                fontFamily: 'DM Sans',
-                boxShadow: '0 4px 24px rgba(232,116,76,0.4)',
-              }}
-            >
-              {summaryLoading ? 'Loading summary...' : 'Load summary'}
-            </button>
-
-            {summaryResult && (
-              <motion.div
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="w-full mt-5 max-h-[42vh] overflow-y-auto rounded-2xl p-4 text-left"
-                style={{ background: 'rgba(255,255,255,0.68)', border: '1px solid rgba(42,42,42,0.08)' }}
-              >
-                {summaryResult.summary ? (
-                  <div className="space-y-3">
-                    <p className="text-ink leading-relaxed" style={{ fontFamily: 'DM Sans', fontSize: '0.95rem' }}>
-                      {summaryResult.summary.simple_summary}
-                    </p>
-                    {summaryResult.summary.key_points.length > 0 && (
-                      <div>
-                        <h3 className="text-coral text-xs uppercase tracking-wider mb-2" style={{ fontFamily: 'DM Sans' }}>
-                          Key points
-                        </h3>
-                        <div className="space-y-1.5">
-                          {summaryResult.summary.key_points.map(point => (
-                            <p key={point} className="text-charcoal/65 text-sm" style={{ fontFamily: 'DM Sans' }}>
-                              {point}
-                            </p>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {summaryResult.summary.suggested_follow_up_questions.length > 0 && (
-                      <div>
-                        <h3 className="text-coral text-xs uppercase tracking-wider mb-2" style={{ fontFamily: 'DM Sans' }}>
-                          Questions to ask next
-                        </h3>
-                        <div className="space-y-1.5">
-                          {summaryResult.summary.suggested_follow_up_questions.map(question => (
-                            <p key={question} className="text-charcoal/65 text-sm" style={{ fontFamily: 'DM Sans' }}>
-                              {question}
-                            </p>
-                          ))}
-                        </div>
-                      </div>
-                    )}
+                <div className="w-full mb-4">
+                  <label className="block text-xs uppercase tracking-widest text-charcoal/40 mb-2"
+                         style={{ fontFamily: 'DM Sans', fontSize: '0.65rem' }}>
+                    Summary language
+                  </label>
+                  <div className="relative">
+                    <select
+                      value={lang}
+                      onChange={e => {
+                        setLang(e.target.value);
+                        setSummaryResult(null);
+                      }}
+                      className="w-full appearance-none rounded-2xl border border-fog text-charcoal
+                                 py-3.5 px-4 text-base cursor-pointer outline-none focus:border-coral/60"
+                      style={{ background: 'rgba(255,255,255,0.8)', fontFamily: 'DM Sans' }}
+                    >
+                      {LANGUAGES.map(l => (
+                        <option key={l.code} value={l.code}>{l.flag} {l.label}</option>
+                      ))}
+                    </select>
+                    <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-charcoal/40">
+                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                        <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </div>
                   </div>
+                </div>
+
+                <div className="w-full mb-4">
+                  <label className="block text-xs uppercase tracking-widest text-charcoal/40 mb-2"
+                         style={{ fontFamily: 'DM Sans', fontSize: '0.65rem' }}>
+                    Room code
+                  </label>
+                  <input
+                    ref={inputRef}
+                    type="text"
+                    value={summaryCode}
+                    onChange={e => setSummaryCode(e.target.value.toUpperCase().slice(0, 6))}
+                    onKeyDown={e => e.key === 'Enter' && handleSummaryLookup()}
+                    placeholder="ABCD"
+                    maxLength={6}
+                    className="w-full rounded-2xl border border-fog text-charcoal text-center
+                               py-4 px-4 text-2xl tracking-[0.3em] font-medium outline-none
+                               transition-all focus:border-coral/60 focus:ring-2 focus:ring-coral/15"
+                    style={{
+                      background: 'rgba(255,255,255,0.8)',
+                      fontFamily: 'DM Sans, monospace',
+                      backdropFilter: 'blur(8px)',
+                    }}
+                    autoCapitalize="characters"
+                    autoCorrect="off"
+                    spellCheck={false}
+                  />
+                  {error && (
+                    <p className="text-red-400 text-sm mt-2" style={{ fontFamily: 'DM Sans' }}>{error}</p>
+                  )}
+                </div>
+
+                <button
+                  onClick={handleSummaryLookup}
+                  disabled={summaryLoading}
+                  className="w-full py-4 rounded-2xl text-white font-medium text-base transition-all active:scale-[0.97] disabled:opacity-60"
+                  style={{
+                    background: 'linear-gradient(135deg, #E8744C 0%, #D4973A 100%)',
+                    fontFamily: 'DM Sans',
+                    boxShadow: '0 4px 24px rgba(232,116,76,0.4)',
+                  }}
+                >
+                  {summaryLoading ? 'Loading summary...' : 'Load summary'}
+                </button>
+
+                {summaryResult?.transcript.length ? (
+                  <div className="mt-5 pt-5" style={{ borderTop: '1px solid rgba(42,42,42,0.08)' }}>
+                    <h3 className="text-coral text-xs uppercase tracking-wider mb-3" style={{ fontFamily: 'DM Sans' }}>
+                      Download transcript
+                    </h3>
+                    <div className="grid grid-cols-3 gap-2">
+                      {(['pdf', 'txt', 'json'] as const).map(format => (
+                        <button
+                          key={format}
+                          onClick={() => downloadTranscript(summaryResult, format)}
+                          className="px-3 py-2.5 rounded-xl text-xs uppercase tracking-wider bg-charcoal/8 active:bg-charcoal/15"
+                          style={{ fontFamily: 'DM Sans', color: '#2A2A2A' }}
+                        >
+                          {format}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </aside>
+
+              <main className="min-h-[420px]">
+                {summaryResult ? (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="rounded-[2rem] p-5 sm:p-8 text-left h-full"
+                    style={{ background: 'rgba(255,255,255,0.76)', border: '1px solid rgba(42,42,42,0.08)', backdropFilter: 'blur(10px)' }}
+                  >
+                    {summaryResult.summary ? (
+                      <div className="space-y-7">
+                        <div>
+                          <div className="flex items-center justify-between gap-4 mb-3">
+                            <h3 style={{ fontFamily: 'Fraunces, serif', fontSize: 'clamp(1.7rem, 3vw, 2.4rem)', fontWeight: 300 }}
+                                className="text-ink">
+                              Summary for {summaryResult.room_code}
+                            </h3>
+                            <span className="shrink-0 rounded-full px-3 py-1 text-xs text-charcoal/45 bg-charcoal/5"
+                                  style={{ fontFamily: 'DM Sans' }}>
+                              {summaryResult.transcript_count} lines
+                            </span>
+                          </div>
+                          <p className="text-ink leading-relaxed max-w-3xl" style={{ fontFamily: 'DM Sans', fontSize: '1.08rem' }}>
+                            {summaryResult.summary.simple_summary}
+                          </p>
+                        </div>
+
+                        {summaryResult.summary.key_points.length > 0 && (
+                          <section>
+                            <h3 className="text-coral text-xs uppercase tracking-wider mb-3" style={{ fontFamily: 'DM Sans' }}>
+                              Key points
+                            </h3>
+                            <div className="grid gap-2 sm:grid-cols-2">
+                              {summaryResult.summary.key_points.map(point => (
+                                <p key={point} className="rounded-2xl px-4 py-3 text-charcoal/70 text-sm leading-relaxed"
+                                   style={{ fontFamily: 'DM Sans', background: 'rgba(42,42,42,0.04)' }}>
+                                  {point}
+                                </p>
+                              ))}
+                            </div>
+                          </section>
+                        )}
+
+                      </div>
+                    ) : (
+                      <p className="text-charcoal/50 text-sm" style={{ fontFamily: 'DM Sans' }}>
+                        This room exists, but it does not have a summary yet.
+                      </p>
+                    )}
+                  </motion.div>
                 ) : (
-                  <p className="text-charcoal/50 text-sm" style={{ fontFamily: 'DM Sans' }}>
-                    This room exists, but it does not have a summary yet.
-                  </p>
+                  <div className="hidden lg:flex h-full min-h-[420px] rounded-[2rem] items-center justify-center text-center px-10"
+                       style={{ background: 'rgba(255,255,255,0.42)', border: '1px dashed rgba(42,42,42,0.12)' }}>
+                    <p className="max-w-md text-charcoal/40 leading-relaxed" style={{ fontFamily: 'DM Sans' }}>
+                      Load a room code to see the summary here. Transcript downloads will appear beside it.
+                    </p>
+                  </div>
                 )}
-              </motion.div>
-            )}
+              </main>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

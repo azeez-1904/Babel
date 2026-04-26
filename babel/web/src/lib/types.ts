@@ -26,6 +26,21 @@ export interface TechnicalNote {
   created_at: number;
 }
 
+export interface TranscriptTranslation {
+  to_user: string;
+  target_lang: string;
+  translated_text: string;
+}
+
+export interface TranscriptEntry {
+  id: string;
+  from_user: string;
+  original_text: string;
+  source_lang: string;
+  timestamp: number;
+  translations: TranscriptTranslation[];
+}
+
 export interface RoomSummary {
   room_code: string;
   language: string;
@@ -41,6 +56,7 @@ export interface RoomSummaryResponse {
   summary: RoomSummary | null;
   technical_notes: TechnicalNote[];
   follow_up_questions: string[];
+  transcript: TranscriptEntry[];
   transcript_count: number;
   updated_at: number;
 }
