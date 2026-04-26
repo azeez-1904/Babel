@@ -137,6 +137,39 @@ function MicButton({ active, onToggle, disabled }: { active: boolean; onToggle: 
   );
 }
 
+// ─── Audio toggle button ─────────────────────────────────────────────────────
+function AudioButton({ active, onToggle }: { active: boolean; onToggle: () => void }) {
+  return (
+    <motion.button
+      onClick={onToggle}
+      whileTap={{ scale: 0.92 }}
+      className="relative flex items-center justify-center rounded-full transition-all"
+      style={{
+        width: 48, height: 48,
+        background: active ? 'rgba(255,255,255,0.8)' : 'rgba(42,42,42,0.08)',
+        border: active ? '1.5px solid rgba(42,42,42,0.12)' : '1.5px solid rgba(42,42,42,0.2)',
+        backdropFilter: 'blur(8px)',
+      }}
+      aria-label={active ? 'Mute audio' : 'Unmute audio'}
+    >
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+        {active ? (
+          <>
+            <path d="M11 5L6 9H2v6h4l5 4V5z" fill="#2A2A2A" />
+            <path d="M19.07 4.93a10 10 0 010 14.14M15.54 8.46a5 5 0 010 7.07" stroke="#2A2A2A" strokeWidth="1.8" strokeLinecap="round" />
+          </>
+        ) : (
+          <>
+            <path d="M11 5L6 9H2v6h4l5 4V5z" fill="#2A2A2A80" />
+            <line x1="23" y1="9" x2="17" y2="15" stroke="#E8744C" strokeWidth="1.8" strokeLinecap="round" />
+            <line x1="17" y1="9" x2="23" y2="15" stroke="#E8744C" strokeWidth="1.8" strokeLinecap="round" />
+          </>
+        )}
+      </svg>
+    </motion.button>
+  );
+}
+
 // ─── Live interim text ────────────────────────────────────────────────────────
 function InterimBubble({ text }: { text: string }) {
   return (
@@ -190,9 +223,12 @@ export function ConversationScreen({
   const [distressVisible, setDistressVisible] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [micActive, setMicActive] = useState(true);
+  const [audioActive, setAudioActive] = useState(true);
   const [interimText, setInterimText] = useState('');
   const [toast, setToast] = useState('');
   const [toastVisible, setToastVisible] = useState(false);
+
+  const audioActiveRef = useRef(true);
 
   const speakQueueRef = useRef<Array<{ text: string; lang: string }>>([]);
   const isSpeakingRef = useRef(false);
@@ -212,6 +248,13 @@ export function ConversationScreen({
   const drainQueue = useCallback(() => {
     if (isSpeakingRef.current || speakQueueRef.current.length === 0) return;
     const next = speakQueueRef.current.shift()!;
+
+    // If audio is off, skip speaking but still clear the queue
+    if (!audioActiveRef.current) {
+      if (speakQueueRef.current.length > 0) drainQueue();
+      return;
+    }
+
     isSpeakingRef.current = true;
     setIsSpeaking(true);
     setOrbState('speaking');
@@ -233,6 +276,19 @@ export function ConversationScreen({
     speakQueueRef.current.push({ text, lang });
     drainQueue();
   }, [drainQueue]);
+
+  const toggleAudio = useCallback(() => {
+    const next = !audioActiveRef.current;
+    audioActiveRef.current = next;
+    setAudioActive(next);
+    if (!next) {
+      window.speechSynthesis?.cancel();
+      isSpeakingRef.current = false;
+      setIsSpeaking(false);
+      speakQueueRef.current = [];
+    }
+    showToast(next ? 'Audio on' : 'Audio off');
+  }, [showToast]);
 
   // ── WebSocket messages ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -470,8 +526,8 @@ export function ConversationScreen({
       <div className="relative z-10 flex flex-col items-center gap-5 pb-10">
         <StatusOrb state={micActive ? orbState : 'idle'} size={120} />
 
-        <div className="flex items-center gap-6">
-          {/* Mic toggle */}
+        <div className="flex items-center gap-4">
+          <AudioButton active={audioActive} onToggle={toggleAudio} />
           <MicButton active={micActive} onToggle={toggleMic} />
         </div>
 

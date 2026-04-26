@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer } from 'http';
 import Anthropic from '@anthropic-ai/sdk';
@@ -27,6 +28,7 @@ type IncomingMsg = JoinRoomMsg | UtteranceMsg | StateChangeMsg | DevicePingMsg |
 interface TranslationResult {
   source_lang: string;
   translated_text: string;
+  cleaned_original: string;
   distress_flag: boolean;
   tone_note: string;
 }
@@ -69,25 +71,63 @@ function send(client: BabelClient, payload: object) {
     client.ws.send(JSON.stringify(payload));
 }
 
+// ─── Language code → human name ──────────────────────────────────────────────
+
+const LANG_NAMES: Record<string, string> = {
+  'en-US': 'English',    'en-GB': 'English',
+  'es-ES': 'Spanish',    'es-MX': 'Spanish',
+  'fr-FR': 'French',     'de-DE': 'German',
+  'zh-CN': 'Mandarin Chinese', 'zh-TW': 'Traditional Chinese',
+  'ja-JP': 'Japanese',   'ko-KR': 'Korean',
+  'pt-BR': 'Brazilian Portuguese', 'pt-PT': 'European Portuguese',
+  'ar-SA': 'Arabic',     'hi-IN': 'Hindi',
+  'it-IT': 'Italian',    'ru-RU': 'Russian',
+  'nl-NL': 'Dutch',      'pl-PL': 'Polish',
+  'tr-TR': 'Turkish',    'sv-SE': 'Swedish',
+  'da-DK': 'Danish',     'fi-FI': 'Finnish',
+  'nb-NO': 'Norwegian',  'he-IL': 'Hebrew',
+  'vi-VN': 'Vietnamese', 'th-TH': 'Thai',
+};
+
+function langName(code: string): string {
+  return LANG_NAMES[code] ?? code;
+}
+
 // ─── Translation ──────────────────────────────────────────────────────────────
 
-async function translate(text: string, targetLang: string): Promise<TranslationResult> {
+async function translate(text: string, targetLangCode: string): Promise<TranslationResult> {
+  const targetLangName = langName(targetLangCode);
+
   const msg = await anthropic.messages.create({
     model: 'claude-sonnet-4-5',
     max_tokens: 512,
-    system: `You are a real-time spoken-word interpreter. Translate speech naturally and faithfully.
+    system: `You are a professional real-time spoken-word interpreter. Your ONLY job is to translate speech into a completely different language, safely and accurately.
 
-Rules:
-- Auto-detect the source language from context
-- Translate to the specified target language
-- Preserve tone, register, and cultural expression — NEVER flatten AAVE, regional dialects, code-switching, or accented speech patterns into "standard" forms
-- Maintain emotional weight: urgency stays urgent, warmth stays warm
-- If ANY of these distress signals appear (chest pain, can't breathe, can't breathe, emergency, help me, I'm dying, stroke, heart attack, choking, unconscious, seizure): set distress_flag to true
-- Return ONLY valid JSON — no markdown, no explanation, no surrounding text
+CRITICAL RULES:
+- Output the text ENTIRELY in the target language. Every word must be in that language.
+- Do NOT modify the source words with accents or diacritics. That is NOT translation.
+- Do NOT keep any English words (or source language words) in your output unless they are proper nouns with no equivalent.
+- Example: translating "hello how are you" to Spanish → WRONG: "héllo hów áre yöu" | CORRECT: "hola ¿cómo estás?"
+- Preserve tone, register, and natural phrasing — do not make it stilted or word-for-word literal
+- Preserve dialect, AAVE, code-switching, and cultural expression — never flatten them
+- Auto-detect the source language
 
-Response schema:
-{"source_lang":"<detected language name>","translated_text":"<translation>","distress_flag":false,"tone_note":"<one word: casual|formal|urgent|warm|playful>"}`,
-    messages: [{ role: 'user', content: `Target language: ${targetLang}\nTranslate: "${text}"` }],
+CONTENT SAFETY (apply to BOTH original and translation):
+- Replace profanity and slurs with neutral equivalents that preserve meaning (e.g. "fuck you" → "screw you", "what the f***" → "what the heck")
+- Explicit sexual language → clinical/neutral terms
+- Hate speech or slurs → neutral descriptor with same sentiment
+- Graphic violent threats → softened equivalents
+- Keep emotional tone intact — just remove the explicit wording
+- cleaned_original is the SFW version of the INPUT text in its original language
+
+DISTRESS DETECTION:
+- If any of these appear: chest pain, can't breathe, emergency, help me, I'm dying, stroke, heart attack, choking, seizure, unconscious → set distress_flag to true
+
+- Return ONLY valid JSON — no markdown fences, no explanation
+
+Response schema (JSON only):
+{"source_lang":"<detected language name>","translated_text":"<full SFW translation in target language>","cleaned_original":"<SFW version of the original input text>","distress_flag":false,"tone_note":"<casual|formal|urgent|warm|playful>"}`,
+    messages: [{ role: 'user', content: `Translate the following into ${targetLangName}. Write the entire response in ${targetLangName}.\n\n"${text}"` }],
   });
 
   const content = msg.content[0];
@@ -135,6 +175,9 @@ async function handleUtterance(client: BabelClient, msg: UtteranceMsg) {
     return c && !c.isDevice; // devices get state_change, not utterances
   });
 
+  let cleanedOriginal: string = msg.original_text;
+  let distressFired = false;
+
   const translationPromises = recipients.map(async (uid) => {
     const recipient = clients.get(uid);
     if (!recipient?.lang) return;
@@ -142,18 +185,22 @@ async function handleUtterance(client: BabelClient, msg: UtteranceMsg) {
     try {
       const result = await translate(msg.original_text, recipient.lang);
 
-      if (result.distress_flag) {
+      // Capture cleaned original from the first result (same input = same cleaning)
+      cleanedOriginal = result.cleaned_original ?? msg.original_text;
+
+      if (result.distress_flag && !distressFired) {
+        distressFired = true;
         broadcast(room!, {
           type: 'distress_alert',
           from_user: client.userId,
-          message: msg.original_text,
+          message: cleanedOriginal,
         });
       }
 
       send(recipient, {
         type: 'utterance',
         from_user: client.userId,
-        original_text: msg.original_text,
+        original_text: cleanedOriginal,
         translated_text: result.translated_text,
         source_lang: result.source_lang,
         distress_flag: result.distress_flag,
@@ -166,7 +213,7 @@ async function handleUtterance(client: BabelClient, msg: UtteranceMsg) {
         type: 'utterance',
         from_user: client.userId,
         original_text: msg.original_text,
-        translated_text: msg.original_text, // fallback: show original
+        translated_text: msg.original_text,
         source_lang: client.lang,
         distress_flag: false,
         tone_note: 'casual',
@@ -178,10 +225,10 @@ async function handleUtterance(client: BabelClient, msg: UtteranceMsg) {
 
   await Promise.all(translationPromises);
 
-  // Also echo original back to sender for their own transcript
+  // Echo cleaned text back to sender so their own "YOU SAID" card is also SFW
   send(client, {
     type: 'utterance_echo',
-    original_text: msg.original_text,
+    original_text: cleanedOriginal,
     timestamp,
   });
 
