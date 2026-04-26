@@ -4,8 +4,11 @@ import { HeroScreen } from './components/HeroScreen';
 import { ConversationScreen } from './components/ConversationScreen';
 import { LessonScreen } from './components/LessonScreen';
 import { SoloPracticeScreen } from './components/SoloPracticeScreen';
+import { TextConversationScreen } from './components/TextConversationScreen';
 import { useWebSocket } from './hooks/useWebSocket';
 import type { Screen } from './lib/types';
+
+type InputMode = 'voice' | 'text';
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>('hero');
@@ -13,6 +16,7 @@ export default function App() {
   const [myLang, setMyLang] = useState('en-US');
   const [myUserId, setMyUserId] = useState('');
   const [lessonTarget, setLessonTarget] = useState('');
+  const [inputMode, setInputMode] = useState<InputMode>('voice');
 
   const { send, status, roomSize, on } = useWebSocket();
 
@@ -23,9 +27,10 @@ export default function App() {
     return unsub;
   }, [on]);
 
-  const handleStart = useCallback((code: string, lang: string) => {
+  const handleStart = useCallback((code: string, lang: string, _isNew: boolean, mode: InputMode = 'voice') => {
     setRoomCode(code);
     setMyLang(lang);
+    setInputMode(mode);
     send({ type: 'join_room', room_code: code, user_lang: lang });
     setScreen('conversation');
   }, [send]);
@@ -46,13 +51,13 @@ export default function App() {
     setScreen('solo');
   }, []);
 
+  // Only request mic for voice mode
   useEffect(() => {
-    if (screen === 'hero') {
-      navigator.mediaDevices?.getUserMedia({ audio: true }).catch(() => {
-        console.warn('Mic permission not granted yet');
-      });
-    }
-  }, [screen]);
+    if (screen === 'hero' || inputMode === 'text') return;
+    navigator.mediaDevices?.getUserMedia({ audio: true }).catch(() => {
+      console.warn('Mic permission not granted yet');
+    });
+  }, [screen, inputMode]);
 
   return (
     <div className="h-full overflow-hidden" style={{ background: '#FAF7F2' }}>
@@ -76,6 +81,25 @@ export default function App() {
         )}
 
         {screen === 'conversation' && (
+        ) : inputMode === 'text' ? (
+          <motion.div
+            key="text-conversation"
+            className="absolute inset-0"
+            initial={{ opacity: 0, y: 40 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <TextConversationScreen
+              roomCode={roomCode}
+              myLang={myLang}
+              myUserId={myUserId}
+              onLeave={handleLeave}
+              send={send}
+              onMessage={on}
+            />
+          </motion.div>
+        ) : (
           <motion.div
             key="conversation"
             className="absolute inset-0"

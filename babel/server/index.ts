@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer } from 'http';
 import Anthropic from '@anthropic-ai/sdk';
+import twilio from 'twilio';
 import {
   appendTranscript,
   getArchive,
@@ -20,6 +21,9 @@ import {
 
 const PORT = parseInt(process.env.PORT ?? '8080');
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const twilioClient = (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN)
+  ? twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
+  : null;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -29,6 +33,13 @@ interface BabelClient {
   room?: string;
   lang?: string;
   isDevice?: boolean;
+}
+
+interface SmsClient {
+  phone: string;
+  room: string;
+  lang: string;
+  userId: string;
 }
 
 type State = 'idle' | 'listening' | 'thinking' | 'speaking' | 'error';
@@ -113,9 +124,10 @@ interface SoloSummaryResult {
 // ─── State ────────────────────────────────────────────────────────────────────
 
 const clients = new Map<string, BabelClient>();
-// room_code → Set<userId>
 const rooms = new Map<string, Set<string>>();
 const soloSessions = new Map<string, SoloSession>();
+const smsClients = new Map<string, SmsClient>(); // phone → SmsClient
+const smsUserIds = new Map<string, string>();    // userId → phone
 
 let userCounter = 0;
 function nextId() { return `u${++userCounter}`; }
@@ -148,14 +160,35 @@ function broadcastPeers(roomCode: string) {
   if (!room) return;
   const peers = [...room].map(uid => {
     const c = clients.get(uid);
-    return { userId: uid, lang: c?.lang ?? '', isDevice: c?.isDevice ?? false };
-  });
+    if (c) return { userId: uid, lang: c.lang ?? '', isDevice: c.isDevice ?? false };
+    const phone = smsUserIds.get(uid);
+    const sms = phone ? smsClients.get(phone) : null;
+    if (sms) return { userId: uid, lang: sms.lang, isDevice: false };
+    return null;
+  }).filter(Boolean);
   broadcast(room, { type: 'peers_update', peers });
 }
 
 function send(client: BabelClient, payload: object) {
   if (client.ws.readyState === WebSocket.OPEN)
     client.ws.send(JSON.stringify(payload));
+}
+
+async function sendSms(to: string, body: string) {
+  if (!twilioClient || !process.env.TWILIO_PHONE_NUMBER) {
+    console.log(`[SMS] (no Twilio) → ${to}: ${body.slice(0, 80)}`);
+    return;
+  }
+  const from = process.env.TWILIO_PHONE_NUMBER;
+  // WhatsApp sandbox: prefix recipient number with whatsapp:
+  const toAddr = from.startsWith('whatsapp:') && !to.startsWith('whatsapp:')
+    ? `whatsapp:${to}`
+    : to;
+  try {
+    await twilioClient.messages.create({ from, to: toAddr, body });
+  } catch (err) {
+    console.error(`[SMS] Failed to send to ${to}:`, err);
+  }
 }
 
 // ─── Language code → human name ──────────────────────────────────────────────
@@ -697,64 +730,71 @@ async function handleUtterance(client: BabelClient, msg: UtteranceMsg) {
   // Notify everyone we're thinking
   broadcast(room, { type: 'state_change', user: client.userId, state: 'thinking' });
 
-  // Translate for each recipient with a different language
+  // Translate for each recipient with a different language (WS + SMS)
   const recipients = [...room].filter(uid => {
     if (uid === client.userId) return false;
     const c = clients.get(uid);
-    return c && !c.isDevice; // devices get state_change, not utterances
+    if (c) return !c.isDevice;
+    return smsUserIds.has(uid);
   });
 
   let cleanedOriginal: string = msg.original_text;
   let distressFired = false;
 
   const translationPromises = recipients.map(async (uid) => {
-    const recipient = clients.get(uid);
-    if (!recipient?.lang) return;
+    const wsRecipient = clients.get(uid);
+    const smsPhone = smsUserIds.get(uid);
+    const smsRecipient = smsPhone ? smsClients.get(smsPhone) : null;
+    const recipientLang = wsRecipient?.lang ?? smsRecipient?.lang;
+    if (!recipientLang) return;
 
     try {
-      const result = await translate(msg.original_text, recipient.lang);
+      const result = await translate(msg.original_text, recipientLang);
       detectedSourceLang = result.source_lang || detectedSourceLang;
       translations.push({
-        to_user: recipient.userId,
-        target_lang: recipient.lang,
+        to_user: uid,
+        target_lang: recipientLang,
         translated_text: result.translated_text,
       });
 
-      // Capture cleaned original from the first result (same input = same cleaning)
       cleanedOriginal = result.cleaned_original ?? msg.original_text;
 
       if (result.distress_flag && !distressFired) {
         distressFired = true;
-        broadcast(room!, {
-          type: 'distress_alert',
-          from_user: client.userId,
-          message: cleanedOriginal,
-        });
+        broadcast(room!, { type: 'distress_alert', from_user: client.userId, message: cleanedOriginal });
       }
 
-      send(recipient, {
-        type: 'utterance',
-        from_user: client.userId,
-        original_text: cleanedOriginal,
-        translated_text: result.translated_text,
-        source_lang: result.source_lang,
-        distress_flag: result.distress_flag,
-        tone_note: result.tone_note,
-        timestamp,
-      });
+      if (wsRecipient) {
+        send(wsRecipient, {
+          type: 'utterance',
+          from_user: client.userId,
+          original_text: cleanedOriginal,
+          translated_text: result.translated_text,
+          source_lang: result.source_lang,
+          distress_flag: result.distress_flag,
+          tone_note: result.tone_note,
+          timestamp,
+        });
+      } else if (smsRecipient) {
+        await sendSms(smsRecipient.phone, result.translated_text);
+      }
     } catch (err) {
       console.error(`Translation error for ${uid}:`, err);
-      send(recipient, {
-        type: 'utterance',
-        from_user: client.userId,
-        original_text: msg.original_text,
-        translated_text: msg.original_text,
-        source_lang: client.lang,
-        distress_flag: false,
-        tone_note: 'casual',
-        timestamp,
-        error: true,
-      });
+      if (wsRecipient) {
+        send(wsRecipient, {
+          type: 'utterance',
+          from_user: client.userId,
+          original_text: msg.original_text,
+          translated_text: msg.original_text,
+          source_lang: client.lang,
+          distress_flag: false,
+          tone_note: 'casual',
+          timestamp,
+          error: true,
+        });
+      } else if (smsRecipient) {
+        await sendSms(smsRecipient.phone, msg.original_text);
+      }
     }
   });
 
@@ -858,6 +898,164 @@ async function handleFinalizeRequest(roomCode: string, targetLang: string) {
   return handleSummaryRequest(roomCode, targetLang);
 }
 
+// ─── SMS bridge ───────────────────────────────────────────────────────────────
+
+async function handleSmsUtterance(phone: string, text: string) {
+  const smsClient = smsClients.get(phone);
+  if (!smsClient) return;
+
+  const { room: roomCode, lang, userId } = smsClient;
+  const room = rooms.get(roomCode);
+  if (!room) {
+    await sendSms(phone, `Room ${roomCode} has closed. Text "JOIN <code>" to rejoin.`);
+    return;
+  }
+
+  const timestamp = Date.now();
+  broadcast(room, { type: 'state_change', user: userId, state: 'thinking' });
+
+  const recipients = [...room].filter(uid => {
+    if (uid === userId) return false;
+    const c = clients.get(uid);
+    return c && !c.isDevice;
+  });
+
+  const translations: TranscriptTranslation[] = [];
+  let detectedSourceLang = lang;
+  let cleanedOriginal = text;
+  let distressFired = false;
+
+  await Promise.all(recipients.map(async uid => {
+    const recipient = clients.get(uid);
+    if (!recipient?.lang) return;
+
+    try {
+      const result = await translate(text, recipient.lang);
+      detectedSourceLang = result.source_lang || detectedSourceLang;
+      cleanedOriginal = result.cleaned_original ?? text;
+      translations.push({ to_user: uid, target_lang: recipient.lang, translated_text: result.translated_text });
+
+      if (result.distress_flag && !distressFired) {
+        distressFired = true;
+        broadcast(room, { type: 'distress_alert', from_user: userId, message: cleanedOriginal });
+      }
+
+      send(recipient, {
+        type: 'utterance',
+        from_user: userId,
+        original_text: cleanedOriginal,
+        translated_text: result.translated_text,
+        source_lang: result.source_lang,
+        distress_flag: result.distress_flag,
+        tone_note: result.tone_note,
+        timestamp,
+      });
+    } catch (err) {
+      console.error(`[SMS] Translation error for ${uid}:`, err);
+      send(recipient, {
+        type: 'utterance',
+        from_user: userId,
+        original_text: text,
+        translated_text: text,
+        source_lang: lang,
+        distress_flag: false,
+        tone_note: 'casual',
+        timestamp,
+        error: true,
+      });
+    }
+  }));
+
+  await appendTranscript(roomCode, {
+    id: `${timestamp}-${userId}`,
+    from_user: userId,
+    original_text: text,
+    source_lang: detectedSourceLang,
+    timestamp,
+    translations,
+  });
+
+  await sendSms(phone, `✓ "${cleanedOriginal}"`);
+  broadcast(room, { type: 'state_change', user: userId, state: 'idle' });
+  void analyzeAndBroadcast(roomCode, text);
+}
+
+async function handleSmsWebhook(req: import('http').IncomingMessage, res: import('http').ServerResponse) {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) chunks.push(Buffer.from(chunk as ArrayBuffer));
+  const body = Buffer.concat(chunks).toString('utf8');
+
+  // Respond to Twilio immediately with empty TwiML
+  res.writeHead(200, { 'Content-Type': 'text/xml' });
+  res.end('<?xml version="1.0" encoding="UTF-8"?><Response/>');
+
+  const params = new URLSearchParams(body);
+  const from = params.get('From')?.trim() ?? '';
+  const rawText = params.get('Body')?.trim() ?? '';
+  if (!from || !rawText) return;
+
+  console.log(`[SMS] ${from}: ${rawText.slice(0, 80)}`);
+
+  const parts = rawText.trim().split(/\s+/);
+  const cmd = parts[0].toUpperCase();
+
+  if (cmd === 'JOIN' && parts.length >= 2) {
+    const roomCode = normalizeRoomCode(parts[1]);
+    const lang = (parts[2] && /^[a-z]{2}-[A-Z]{2}$/i.test(parts[2])) ? parts[2] : 'en-US';
+
+    // Remove previous session if rejoining
+    const existing = smsClients.get(from);
+    if (existing) {
+      const oldRoom = rooms.get(existing.room);
+      if (oldRoom) {
+        oldRoom.delete(existing.userId);
+        if (oldRoom.size === 0) rooms.delete(existing.room);
+        else { broadcast(oldRoom, { type: 'peer_left', user: existing.userId, room_size: oldRoom.size }); broadcastPeers(existing.room); }
+      }
+      smsUserIds.delete(existing.userId);
+    }
+
+    const userId = nextId();
+    const smsClient: SmsClient = { phone: from, room: roomCode, lang, userId };
+    smsClients.set(from, smsClient);
+    smsUserIds.set(userId, from);
+
+    if (!rooms.has(roomCode)) rooms.set(roomCode, new Set());
+    rooms.get(roomCode)!.add(userId);
+    const roomSize = rooms.get(roomCode)!.size;
+
+    broadcast(rooms.get(roomCode)!, { type: 'peer_joined', room_size: roomSize }, userId);
+    broadcastPeers(roomCode);
+
+    await sendSms(from, `Joined room ${roomCode} as ${langName(lang)} speaker 🌐\nJust text normally — everything is auto-translated!\nText LEAVE to exit.`);
+    console.log(`[SMS] ${from} joined room ${roomCode} lang=${lang} as ${userId}`);
+    return;
+  }
+
+  if (cmd === 'LEAVE') {
+    const existing = smsClients.get(from);
+    if (existing) {
+      const room = rooms.get(existing.room);
+      if (room) {
+        room.delete(existing.userId);
+        if (room.size === 0) rooms.delete(existing.room);
+        else { broadcast(room, { type: 'peer_left', user: existing.userId, room_size: room.size }); broadcastPeers(existing.room); }
+      }
+      smsUserIds.delete(existing.userId);
+      smsClients.delete(from);
+      await sendSms(from, `You left room ${existing.room}. Text "JOIN <code>" to join again.`);
+    }
+    return;
+  }
+
+  if (!smsClients.has(from)) {
+    await sendSms(from, `Text "JOIN ABCD" with your room code to join a Babel translation room.\nAdd your language: "JOIN ABCD es-ES"`);
+    return;
+  }
+
+  await handleSmsUtterance(from, rawText);
+}
+
 // ─── Server ───────────────────────────────────────────────────────────────────
 
 const httpServer = createServer(async (req, res) => {
@@ -869,6 +1067,11 @@ const httpServer = createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
     res.end();
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/sms') {
+    await handleSmsWebhook(req, res);
     return;
   }
 
@@ -990,5 +1193,10 @@ httpServer.listen(PORT, () => {
   console.log(`Health: http://localhost:${PORT}/health`);
   if (!process.env.ANTHROPIC_API_KEY) {
     console.warn('WARNING: ANTHROPIC_API_KEY not set — translation will fail');
+  }
+  if (twilioClient) {
+    console.log(`SMS bridge: POST http://localhost:${PORT}/sms  (Twilio number: ${process.env.TWILIO_PHONE_NUMBER ?? 'not set'})`);
+  } else {
+    console.log('SMS bridge: disabled — add TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_PHONE_NUMBER to .env to enable');
   }
 });
