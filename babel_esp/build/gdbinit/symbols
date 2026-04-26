@@ -1,9 +1,0 @@
-
-
-# Load bootloader symbols
-set confirm off
-    add-symbol-file C:/Users/ryana/Desktop/NJIT-Claude-Hack/babel_esp/build/bootloader/bootloader.elf
-set confirm on
-
-# Load application symbols
-file C:/Users/ryana/Desktop/NJIT-Claude-Hack/babel_esp/build/babel_esp.elf
