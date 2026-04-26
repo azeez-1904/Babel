@@ -19,3 +19,12 @@ firmware/.vscode/
 # OS
 .DS_Store
 Thumbs.db
+
+
+.env
+*.env
+.claude/
+node_modules/
+dist/
+.pio/
+data/
