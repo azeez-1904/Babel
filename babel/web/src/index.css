@@ -1,0 +1,44 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --parchment: #FAF7F2;
+  --coral:     #E8744C;
+  --amber:     #D4973A;
+  --charcoal:  #2A2A2A;
+  --ink:       #1A1612;
+  --fog:       #EDE8E0;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background-color: var(--parchment);
+}
+
+body {
+  font-family: 'DM Sans', system-ui, sans-serif;
+  color: var(--charcoal);
+}
+
+/* Prevent text selection during demo */
+.no-select {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Safe area insets for modern phones */
+.safe-top    { padding-top:    env(safe-area-inset-top,    16px); }
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom, 16px); }
+
+@layer utilities {
+  .text-balance { text-wrap: balance; }
+}

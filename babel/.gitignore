@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+.vite/
+
+# Env files (contain secrets)
+.env
+server/.env
+web/.env
+firmware/src/config.h
+
+# PlatformIO
+firmware/.pio/
+firmware/.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
