@@ -458,20 +458,6 @@ function SummaryPanel({
                     </div>
                   </div>
                 )}
-                {summary.suggested_follow_up_questions.length > 0 && (
-                  <div>
-                    <h3 className="text-coral text-xs uppercase tracking-wider mb-2" style={{ fontFamily: 'DM Sans' }}>
-                      Questions to ask next
-                    </h3>
-                    <div className="space-y-2">
-                      {summary.suggested_follow_up_questions.map(question => (
-                        <p key={question} className="text-charcoal/70 text-sm" style={{ fontFamily: 'DM Sans' }}>
-                          {question}
-                        </p>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
             ) : (
               <p className="text-charcoal/45 text-sm" style={{ fontFamily: 'DM Sans' }}>
