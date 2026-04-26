@@ -1,6 +1,7 @@
 .env
 *.env
 .claude/
+.runlogs/
 node_modules/
 dist/
 .pio/
