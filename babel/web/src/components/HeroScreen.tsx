@@ -5,6 +5,8 @@ import { LANGUAGES } from '../lib/types';
 import type { RoomSummaryResponse } from '../lib/types';
 
 interface Props {
+  onLesson: (roomCode: string, userLang: string, targetLang: string) => void;
+  onSolo: () => void;
   onStart: (roomCode: string, lang: string, isNew: boolean, mode?: 'voice' | 'text') => void;
   wsStatus: 'connecting' | 'connected' | 'disconnected';
 }
@@ -212,8 +214,10 @@ function GradientBackdrop() {
   );
 }
 
+
 export function HeroScreen({ onStart, wsStatus }: Props) {
   const [mode, setMode] = useState<'home' | 'start' | 'join' | 'text-join' | 'summary'>('home');
+  const [lessonTargetLang, setLessonTargetLang] = useState('');
   const [lang, setLang] = useState('en-US');
   const [joinCode, setJoinCode] = useState('');
   const [summaryCode, setSummaryCode] = useState('');
@@ -411,6 +415,12 @@ export function HeroScreen({ onStart, wsStatus }: Props) {
               </button>
 
               <button
+                onClick={onSolo}
+                disabled={wsStatus !== 'connected'}
+                className="w-full py-4 rounded-2xl text-charcoal font-medium text-base transition-all active:scale-[0.97]"
+                style={{
+                  background: 'rgba(255,255,255,0.6)',
+                  border: '1.5px solid rgba(42,42,42,0.12)',
                 onClick={() => setMode('text-join')}
                 disabled={wsStatus !== 'connected'}
                 className="w-full py-4 rounded-2xl font-medium text-base transition-all active:scale-[0.97] flex items-center justify-center gap-2"
@@ -427,6 +437,7 @@ export function HeroScreen({ onStart, wsStatus }: Props) {
                   letterSpacing: '0.01em',
                 }}
               >
+                Practice solo
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
                   <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"
                     fill={wsStatus === 'connected' ? 'rgba(0,122,255,0.15)' : 'rgba(180,180,180,0.2)'}
@@ -856,6 +867,59 @@ export function HeroScreen({ onStart, wsStatus }: Props) {
                         </button>
                       ))}
                     </div>
+                  </div>
+                ) : null}
+
+                {summaryResult?.transcript.length ? (
+                  <div className="mt-5 pt-5" style={{ borderTop: '1px solid rgba(42,42,42,0.08)' }}>
+                    <h3 className="text-coral text-xs uppercase tracking-wider mb-3" style={{ fontFamily: 'DM Sans' }}>
+                      Learn from this conversation
+                    </h3>
+                    <div className="w-full mb-3">
+                      <label className="block text-xs uppercase tracking-widest text-charcoal/40 mb-2"
+                             style={{ fontFamily: 'DM Sans', fontSize: '0.6rem' }}>
+                        Language to learn
+                      </label>
+                      <div className="relative">
+                        <select
+                          value={lessonTargetLang || (() => {
+                            const langs = new Set(summaryResult.transcript.map(t => t.source_lang));
+                            const otherLang = [...langs].find(l => l !== lang);
+                            return otherLang ?? '';
+                          })()}
+                          onChange={e => setLessonTargetLang(e.target.value)}
+                          className="w-full appearance-none rounded-2xl border border-fog text-charcoal
+                                     py-3 px-4 text-sm cursor-pointer outline-none focus:border-coral/60"
+                          style={{ background: 'rgba(255,255,255,0.8)', fontFamily: 'DM Sans' }}
+                        >
+                          {LANGUAGES.filter(l => l.code !== lang).map(l => (
+                            <option key={l.code} value={l.code}>{l.flag} {l.label}</option>
+                          ))}
+                        </select>
+                        <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-charcoal/40">
+                          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                            <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => {
+                        const target = lessonTargetLang || (() => {
+                          const langs = new Set(summaryResult.transcript.map(t => t.source_lang));
+                          return [...langs].find(l => l !== lang) ?? LANGUAGES[1].code;
+                        })();
+                        onLesson(summaryResult.room_code, lang, target);
+                      }}
+                      className="w-full py-3.5 rounded-2xl text-white font-medium text-sm transition-all active:scale-[0.97]"
+                      style={{
+                        background: 'linear-gradient(135deg, #E8744C 0%, #D4973A 100%)',
+                        fontFamily: 'DM Sans',
+                        boxShadow: '0 4px 20px rgba(232,116,76,0.35)',
+                      }}
+                    >
+                      Learn key phrases
+                    </button>
                   </div>
                 ) : null}
               </aside>
