@@ -20,6 +20,7 @@ export interface TechnicalNote {
   id: string;
   phrase: string;
   simple_explanation: string;
+  conversation_context?: string;
   why_it_matters: string;
   follow_up_questions: string[];
   confidence: number;
@@ -29,6 +30,7 @@ export interface TechnicalNote {
 
 export interface RoomSummary {
   room_code: string;
+  language: string;
   simple_summary: string;
   key_points: string[];
   suggested_follow_up_questions: string[];
@@ -41,6 +43,7 @@ export interface RoomArchive {
   transcript: TranscriptEntry[];
   technical_notes: TechnicalNote[];
   follow_up_questions: string[];
+  summaries?: Record<string, RoomSummary>;
   summary?: RoomSummary;
   updated_at: number;
 }
@@ -92,6 +95,7 @@ function emptyArchive(roomCode: string): RoomArchive {
     transcript: [],
     technical_notes: [],
     follow_up_questions: [],
+    summaries: {},
     updated_at: now,
   };
 }
@@ -115,17 +119,38 @@ export async function appendTranscript(roomCode: string, entry: TranscriptEntry)
   return archive;
 }
 
-export async function mergeTechnicalNotes(roomCode: string, notes: Omit<TechnicalNote, 'id' | 'created_at'>[]) {
+export async function mergeTechnicalNotes(
+  roomCode: string,
+  notes: Omit<TechnicalNote, 'id' | 'created_at'>[],
+  removeNoteIds: string[] = [],
+) {
   const archive = await getOrCreateArchive(roomCode);
   const now = Date.now();
-  const existingPhrases = new Set(archive.technical_notes.map(note => note.phrase.toLowerCase()));
+  const removeIds = new Set(removeNoteIds);
+  if (removeIds.size > 0) {
+    archive.technical_notes = archive.technical_notes.filter(note => !removeIds.has(note.id));
+  }
+
+  const existingByPhrase = new Map(archive.technical_notes.map(note => [note.phrase.toLowerCase(), note]));
 
   const freshNotes: TechnicalNote[] = [];
   for (const note of notes) {
     const phraseKey = note.phrase.trim().toLowerCase();
-    if (!phraseKey || existingPhrases.has(phraseKey)) continue;
+    if (!phraseKey) continue;
 
-    existingPhrases.add(phraseKey);
+    const existing = existingByPhrase.get(phraseKey);
+    if (existing) {
+      existing.simple_explanation = note.simple_explanation;
+      existing.conversation_context = note.conversation_context;
+      existing.why_it_matters = note.why_it_matters;
+      existing.follow_up_questions = note.follow_up_questions;
+      existing.confidence = note.confidence;
+      existing.source_text = note.source_text;
+      existing.created_at = now;
+      continue;
+    }
+
+    existingByPhrase.set(phraseKey, note as TechnicalNote);
     freshNotes.push({
       ...note,
       id: `${now}-${archive.technical_notes.length + freshNotes.length + 1}`,
@@ -133,29 +158,36 @@ export async function mergeTechnicalNotes(roomCode: string, notes: Omit<Technica
     });
   }
 
-  if (freshNotes.length === 0) return archive;
+  if (freshNotes.length === 0 && notes.length === 0 && removeIds.size === 0) return archive;
 
   archive.technical_notes.push(...freshNotes);
-  archive.follow_up_questions = Array.from(new Set([
-    ...archive.follow_up_questions,
-    ...freshNotes.flatMap(note => note.follow_up_questions),
-  ])).slice(-12);
+  archive.follow_up_questions = Array.from(new Set(
+    archive.technical_notes.flatMap(note => note.follow_up_questions),
+  )).slice(-12);
   archive.updated_at = now;
   await queuePersist();
   return archive;
 }
 
-export async function saveSummary(roomCode: string, summary: Omit<RoomSummary, 'room_code' | 'updated_at' | 'transcript_count'>) {
+export async function saveSummary(
+  roomCode: string,
+  language: string,
+  summary: Omit<RoomSummary, 'room_code' | 'language' | 'updated_at' | 'transcript_count'>,
+) {
   const archive = await getOrCreateArchive(roomCode);
-  archive.summary = {
+  const savedSummary: RoomSummary = {
     ...summary,
     room_code: archive.room_code,
+    language,
     updated_at: Date.now(),
     transcript_count: archive.transcript.length,
   };
+  archive.summaries = archive.summaries ?? {};
+  archive.summaries[language] = savedSummary;
+  archive.summary = savedSummary;
   archive.updated_at = archive.summary.updated_at;
   await queuePersist();
-  return archive.summary;
+  return savedSummary;
 }
 
 export async function getArchive(roomCode: string) {

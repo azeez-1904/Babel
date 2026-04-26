@@ -20,7 +20,7 @@ firmware/.vscode/
 .DS_Store
 Thumbs.db
 
-
+server/data/
 .env
 *.env
 .claude/

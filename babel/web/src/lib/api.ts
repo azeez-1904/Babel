@@ -19,12 +19,18 @@ async function requestSummary(path: string, init?: RequestInit): Promise<RoomSum
   return res.json() as Promise<RoomSummaryResponse>;
 }
 
-export function getRoomSummary(roomCode: string) {
-  return requestSummary(`/rooms/${encodeURIComponent(roomCode.trim().toUpperCase())}/summary`);
+function roomSummaryPath(roomCode: string, lang: string, action: 'summary' | 'finalize') {
+  const code = encodeURIComponent(roomCode.trim().toUpperCase());
+  const targetLang = encodeURIComponent(lang);
+  return `/rooms/${code}/${action}?lang=${targetLang}`;
 }
 
-export function finalizeRoomSummary(roomCode: string) {
-  return requestSummary(`/rooms/${encodeURIComponent(roomCode.trim().toUpperCase())}/finalize`, {
+export function getRoomSummary(roomCode: string, lang: string) {
+  return requestSummary(roomSummaryPath(roomCode, lang, 'summary'));
+}
+
+export function finalizeRoomSummary(roomCode: string, lang: string) {
+  return requestSummary(roomSummaryPath(roomCode, lang, 'finalize'), {
     method: 'POST',
   });
 }
