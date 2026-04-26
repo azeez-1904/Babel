@@ -124,8 +124,13 @@ async function sendSms(to: string, body: string) {
     console.log(`[SMS] (no Twilio) → ${to}: ${body.slice(0, 80)}`);
     return;
   }
+  const from = process.env.TWILIO_PHONE_NUMBER;
+  // WhatsApp sandbox: prefix recipient number with whatsapp:
+  const toAddr = from.startsWith('whatsapp:') && !to.startsWith('whatsapp:')
+    ? `whatsapp:${to}`
+    : to;
   try {
-    await twilioClient.messages.create({ from: process.env.TWILIO_PHONE_NUMBER, to, body });
+    await twilioClient.messages.create({ from, to: toAddr, body });
   } catch (err) {
     console.error(`[SMS] Failed to send to ${to}:`, err);
   }
