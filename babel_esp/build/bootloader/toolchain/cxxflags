@@ -1,0 +1,6 @@
+@"C:/Users/ryana/Desktop/babel_esp/build/bootloader/toolchain/cxxflags"
+-mlongcalls
+-fno-builtin-memcpy
+-fno-builtin-memset
+-fno-builtin-bzero
+-fno-rtti

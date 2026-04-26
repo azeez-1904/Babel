@@ -1,0 +1,3 @@
+@"C:/Users/ryana/Desktop/babel_esp/build/bootloader/toolchain/ldflags"
+-nostartfiles
+-fno-rtti

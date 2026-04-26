@@ -19,6 +19,7 @@ import {
   type TranscriptTranslation,
 } from './roomArchive';
 
+const HOST = process.env.HOST ?? '0.0.0.0';
 const PORT = parseInt(process.env.PORT ?? '8080');
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const twilioClient = (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN)
@@ -223,7 +224,7 @@ function parseClaudeJson<T>(text: string) {
 async function translate(text: string, targetLang: string): Promise<TranslationResult> {
   const targetLangName = langName(targetLang);
   const msg = await anthropic.messages.create({
-    model: 'claude-sonnet-4-5',
+    model: 'claude-sonnet-4-6',
     max_tokens: 512,
     system: `You are a professional real-time spoken-word interpreter. Your ONLY job is to translate speech into a completely different language, safely and accurately.
 
@@ -1188,9 +1189,10 @@ wss.on('connection', (ws) => {
   send(client, { type: 'connected', user_id: userId });
 });
 
-httpServer.listen(PORT, () => {
-  console.log(`Babel server listening on ws://localhost:${PORT}`);
-  console.log(`Health: http://localhost:${PORT}/health`);
+httpServer.listen(PORT, HOST, () => {
+  console.log(`Babel server listening on ws://${HOST}:${PORT}`);
+  console.log(`ESP bridge target: ws://172.20.10.3:${PORT}`);
+  console.log(`Health: http://172.20.10.3:${PORT}/health`);
   if (!process.env.ANTHROPIC_API_KEY) {
     console.warn('WARNING: ANTHROPIC_API_KEY not set — translation will fail');
   }
