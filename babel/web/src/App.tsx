@@ -2,18 +2,21 @@ import { useState, useEffect, useCallback } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { HeroScreen } from './components/HeroScreen';
 import { ConversationScreen } from './components/ConversationScreen';
+import { TextConversationScreen } from './components/TextConversationScreen';
 import { useWebSocket } from './hooks/useWebSocket';
 import type { Screen } from './lib/types';
+
+type InputMode = 'voice' | 'text';
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>('hero');
   const [roomCode, setRoomCode] = useState('');
   const [myLang, setMyLang] = useState('en-US');
   const [myUserId, setMyUserId] = useState('');
+  const [inputMode, setInputMode] = useState<InputMode>('voice');
 
   const { send, status, roomSize, on } = useWebSocket();
 
-  // Listen for our own user ID assignment
   useEffect(() => {
     const unsub = on('connected', (msg) => {
       setMyUserId(msg.user_id as string);
@@ -21,9 +24,10 @@ export default function App() {
     return unsub;
   }, [on]);
 
-  const handleStart = useCallback((code: string, lang: string) => {
+  const handleStart = useCallback((code: string, lang: string, _isNew: boolean, mode: InputMode = 'voice') => {
     setRoomCode(code);
     setMyLang(lang);
+    setInputMode(mode);
     send({ type: 'join_room', room_code: code, user_lang: lang });
     setScreen('conversation');
   }, [send]);
@@ -33,14 +37,13 @@ export default function App() {
     setRoomCode('');
   }, []);
 
-  // Request mic permission early on hero screen
+  // Only request mic for voice mode
   useEffect(() => {
-    if (screen === 'hero') {
-      navigator.mediaDevices?.getUserMedia({ audio: true }).catch(() => {
-        console.warn('Mic permission not granted yet');
-      });
-    }
-  }, [screen]);
+    if (screen === 'hero' || inputMode === 'text') return;
+    navigator.mediaDevices?.getUserMedia({ audio: true }).catch(() => {
+      console.warn('Mic permission not granted yet');
+    });
+  }, [screen, inputMode]);
 
   return (
     <div className="h-full overflow-hidden" style={{ background: '#FAF7F2' }}>
@@ -55,6 +58,24 @@ export default function App() {
             transition={{ duration: 0.35 }}
           >
             <HeroScreen onStart={handleStart} wsStatus={status} />
+          </motion.div>
+        ) : inputMode === 'text' ? (
+          <motion.div
+            key="text-conversation"
+            className="absolute inset-0"
+            initial={{ opacity: 0, y: 40 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <TextConversationScreen
+              roomCode={roomCode}
+              myLang={myLang}
+              myUserId={myUserId}
+              onLeave={handleLeave}
+              send={send}
+              onMessage={on}
+            />
           </motion.div>
         ) : (
           <motion.div

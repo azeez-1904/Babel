@@ -5,7 +5,7 @@ import { LANGUAGES } from '../lib/types';
 import type { RoomSummaryResponse } from '../lib/types';
 
 interface Props {
-  onStart: (roomCode: string, lang: string, isNew: boolean) => void;
+  onStart: (roomCode: string, lang: string, isNew: boolean, mode?: 'voice' | 'text') => void;
   wsStatus: 'connecting' | 'connected' | 'disconnected';
 }
 
@@ -213,7 +213,7 @@ function GradientBackdrop() {
 }
 
 export function HeroScreen({ onStart, wsStatus }: Props) {
-  const [mode, setMode] = useState<'home' | 'start' | 'join' | 'summary'>('home');
+  const [mode, setMode] = useState<'home' | 'start' | 'join' | 'text-join' | 'summary'>('home');
   const [lang, setLang] = useState('en-US');
   const [joinCode, setJoinCode] = useState('');
   const [summaryCode, setSummaryCode] = useState('');
@@ -224,7 +224,7 @@ export function HeroScreen({ onStart, wsStatus }: Props) {
 
   const handleStart = () => {
     const code = generateCode();
-    onStart(code, lang, true);
+    onStart(code, lang, true, 'voice');
   };
 
   const handleJoin = () => {
@@ -235,7 +235,18 @@ export function HeroScreen({ onStart, wsStatus }: Props) {
       return;
     }
     setError('');
-    onStart(code, lang, false);
+    onStart(code, lang, false, 'voice');
+  };
+
+  const handleTextJoin = () => {
+    const code = joinCode.trim().toUpperCase();
+    if (code.length < 2) {
+      setError('Enter a room code');
+      inputRef.current?.focus();
+      return;
+    }
+    setError('');
+    onStart(code, lang, false, 'text');
   };
 
   const handleSummaryLookup = async () => {
@@ -397,6 +408,32 @@ export function HeroScreen({ onStart, wsStatus }: Props) {
                 }}
               >
                 Join with code
+              </button>
+
+              <button
+                onClick={() => setMode('text-join')}
+                disabled={wsStatus !== 'connected'}
+                className="w-full py-4 rounded-2xl font-medium text-base transition-all active:scale-[0.97] flex items-center justify-center gap-2"
+                style={{
+                  background: wsStatus === 'connected'
+                    ? 'rgba(0,122,255,0.08)'
+                    : 'rgba(200,200,200,0.3)',
+                  border: wsStatus === 'connected'
+                    ? '1.5px solid rgba(0,122,255,0.25)'
+                    : '1.5px solid rgba(42,42,42,0.1)',
+                  color: wsStatus === 'connected' ? '#007AFF' : '#999',
+                  fontFamily: 'DM Sans, sans-serif',
+                  backdropFilter: 'blur(8px)',
+                  letterSpacing: '0.01em',
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                  <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"
+                    fill={wsStatus === 'connected' ? 'rgba(0,122,255,0.15)' : 'rgba(180,180,180,0.2)'}
+                    stroke={wsStatus === 'connected' ? '#007AFF' : '#999'}
+                    strokeWidth="1.7" strokeLinejoin="round"/>
+                </svg>
+                Join via text
               </button>
 
               <button
@@ -589,6 +626,113 @@ export function HeroScreen({ onStart, wsStatus }: Props) {
               }}
             >
               Join →
+            </button>
+          </motion.div>
+        )}
+
+        {mode === 'text-join' && (
+          <motion.div
+            key="text-join"
+            className="relative z-10 flex flex-col items-center w-full max-w-sm"
+            initial={{ opacity: 0, y: 24 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -16 }}
+            transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <button
+              onClick={() => { setMode('home'); setError(''); }}
+              className="self-start mb-8 flex items-center gap-1.5 text-charcoal/50 active:opacity-60"
+              style={{ fontFamily: 'DM Sans', fontSize: '0.875rem' }}
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <path d="M10 12L6 8l4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+              Back
+            </button>
+
+            {/* iMessage-style header */}
+            <div className="flex flex-col items-center mb-7">
+              <div style={{
+                width: 52, height: 52, borderRadius: '50%',
+                background: 'linear-gradient(135deg, #007AFF, #34AADC)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: '1.5rem', marginBottom: 10,
+                boxShadow: '0 4px 20px rgba(0,122,255,0.3)',
+              }}>
+                💬
+              </div>
+              <h2 style={{ fontFamily: 'Fraunces, serif', fontSize: '2rem', fontWeight: 300, color: '#1A1612' }}
+                  className="mb-1 text-center">
+                Join via text
+              </h2>
+              <p className="text-charcoal/50 text-sm text-center" style={{ fontFamily: 'DM Sans' }}>
+                Type instead of speak — messages are translated automatically
+              </p>
+            </div>
+
+            <div className="w-full mb-4">
+              <input
+                ref={inputRef}
+                type="text"
+                value={joinCode}
+                onChange={e => setJoinCode(e.target.value.toUpperCase().slice(0, 6))}
+                onKeyDown={e => e.key === 'Enter' && handleTextJoin()}
+                placeholder="ABCD"
+                maxLength={6}
+                className="w-full rounded-2xl border text-charcoal text-center
+                           py-4 px-4 text-2xl tracking-[0.3em] font-medium outline-none
+                           transition-all"
+                style={{
+                  background: 'rgba(255,255,255,0.7)',
+                  fontFamily: 'DM Sans, monospace',
+                  backdropFilter: 'blur(8px)',
+                  borderColor: error ? 'rgba(255,59,48,0.6)' : 'rgba(0,122,255,0.25)',
+                  boxShadow: error ? 'none' : '0 0 0 3px rgba(0,122,255,0.08)',
+                }}
+                autoCapitalize="characters"
+                autoCorrect="off"
+                spellCheck={false}
+              />
+              {error && (
+                <p className="text-red-400 text-sm text-center mt-2" style={{ fontFamily: 'DM Sans' }}>{error}</p>
+              )}
+            </div>
+
+            <div className="w-full mb-6">
+              <label className="block text-xs uppercase tracking-widest text-charcoal/40 mb-2 text-center"
+                     style={{ fontFamily: 'DM Sans', fontSize: '0.65rem' }}>
+                I speak
+              </label>
+              <div className="relative">
+                <select
+                  value={lang}
+                  onChange={e => setLang(e.target.value)}
+                  className="w-full appearance-none rounded-2xl border border-fog text-charcoal text-center
+                             py-3.5 px-4 text-base cursor-pointer outline-none focus:border-coral/60"
+                  style={{ background: 'rgba(255,255,255,0.7)', fontFamily: 'DM Sans' }}
+                >
+                  {LANGUAGES.map(l => (
+                    <option key={l.code} value={l.code}>{l.flag} {l.label}</option>
+                  ))}
+                </select>
+                <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-charcoal/40">
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </div>
+              </div>
+            </div>
+
+            <button
+              onClick={handleTextJoin}
+              className="w-full py-4 rounded-2xl text-white font-medium text-base transition-all active:scale-[0.97]"
+              style={{
+                background: 'linear-gradient(135deg, #007AFF 0%, #34AADC 100%)',
+                fontFamily: 'DM Sans',
+                boxShadow: '0 4px 24px rgba(0,122,255,0.35)',
+              }}
+            >
+              Open chat →
             </button>
           </motion.div>
         )}
