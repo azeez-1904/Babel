@@ -19,6 +19,7 @@ babel_esp/build/
 babel_esp/managed_components/
 babel_esp/sdkconfig.old
 babel_esp/*.wav
+babel_esp/main/config.h
 
 # Firmware secrets
 firmware/src/config.h

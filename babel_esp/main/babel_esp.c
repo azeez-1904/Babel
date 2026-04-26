@@ -28,10 +28,9 @@
 
 #include "esp_websocket_client.h"
 
+#include "config.h"
+
 /* ESP32-S3-EYE pinout confirmed from esp-bsp/bsp/esp32_s3_eye. */
-#define WIFI_SSID          "iPhone"
-#define WIFI_PASS          "sajJas45"
-#define WS_URI             "ws://172.20.10.3:8765"
 
 #define MIC_BCK_PIN        GPIO_NUM_41
 #define MIC_WS_PIN         GPIO_NUM_42

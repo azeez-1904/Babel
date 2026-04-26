@@ -4,33 +4,56 @@ ESP32-to-Babel bridge
   Transcribes each chunk via Whisper and forwards utterances to Babel server
 
 Usage:
-  ANTHROPIC_API_KEY=sk-... python server.py [--room DEMO01] [--lang English] [--babel ws://localhost:8080]
+  python server.py [--room DEMO01] [--lang English] [--babel ws://localhost:8080] [--model tiny]
+
+Environment variables (override defaults):
+  ROOM_CODE   room code to join  (default DEMO01)
+  ESP_LANG    language label      (default English)
+  BABEL_URL   Babel WS endpoint   (default ws://localhost:8080)
+  ESP_PORT    listen port for ESP (default 8765)
 """
 
-import asyncio, io, wave, os, json, argparse
+import asyncio, os, json, argparse, time, logging
 
 import numpy as np
 import websockets
 from faster_whisper import WhisperModel
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(name)-6s] %(message)s",
+    datefmt="%H:%M:%S",
+)
+log_esp   = logging.getLogger("ESP32")
+log_stt   = logging.getLogger("STT")
+log_babel = logging.getLogger("Babel")
+
 # ---- Config -----------------------------------------------------------------
-ap = argparse.ArgumentParser()
-ap.add_argument("--room",  default=os.getenv("ROOM_CODE", "DEMO01"))
-ap.add_argument("--lang",  default=os.getenv("ESP_LANG",  "English"))
-ap.add_argument("--babel", default=os.getenv("BABEL_URL", "ws://localhost:8080"))
-ap.add_argument("--port",  type=int, default=int(os.getenv("ESP_PORT", "8765")))
+ap = argparse.ArgumentParser(description="ESP32-to-Babel audio bridge")
+ap.add_argument("--room",  default=os.getenv("ROOM_CODE", "DEMO01"),
+                help="Babel room code (default: DEMO01)")
+ap.add_argument("--lang",  default=os.getenv("ESP_LANG",  "English"),
+                help="Language label sent to Babel (default: English)")
+ap.add_argument("--babel", default=os.getenv("BABEL_URL", "ws://localhost:8080"),
+                help="Babel server WebSocket URL (default: ws://localhost:8080)")
+ap.add_argument("--port",  type=int, default=int(os.getenv("ESP_PORT", "8765")),
+                help="Port to listen for ESP32 connections (default: 8765)")
+ap.add_argument("--model", default=os.getenv("WHISPER_MODEL", "base"),
+                choices=["tiny", "base", "small", "medium", "large-v3"],
+                help="Whisper model size (default: base)")
 cfg = ap.parse_args()
 
 SAMPLE_RATE = 16000
 CHUNK_BYTES = int(SAMPLE_RATE * 2 * 1.5)  # 1.5 s of 16-bit mono PCM
 MIN_BYTES   = int(SAMPLE_RATE * 2 * 0.5)  # skip clips shorter than 0.5 s
 
-_SILENCE = {"", ".", "...", "[silence]", "[no speech]", "[inaudible]", "[noise]"}
+_SILENCE = {"", ".", "...", "[silence]", "[no speech]", "[inaudible]", "[noise]",
+            "you", "thank you.", "thanks for watching!"}
 
 # ---- STT --------------------------------------------------------------------
-print("[STT   ] loading Whisper tiny model ...", flush=True)
-_whisper = WhisperModel("tiny", device="cpu", compute_type="int8")
-print("[STT   ] Whisper ready", flush=True)
+log_stt.info("Loading Whisper '%s' model (cpu/int8) ...", cfg.model)
+_whisper = WhisperModel(cfg.model, device="cpu", compute_type="int8")
+log_stt.info("Whisper '%s' ready", cfg.model)
 
 def _transcribe(pcm: bytes) -> str:
     audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
@@ -38,54 +61,92 @@ def _transcribe(pcm: bytes) -> str:
     text = " ".join(s.text for s in segments).strip()
     return "" if text.lower() in _SILENCE else text
 
-# ---- Babel server connection -------------------------------------------------
+# ---- Babel server connection (with auto-reconnect) --------------------------
 _babel_ws = None
+_babel_lock = asyncio.Lock()
 
-async def _connect_babel():
+async def _ensure_babel():
+    """Connect (or reconnect) to the Babel server and join the room."""
     global _babel_ws
-    print(f"[Babel ] connecting -> {cfg.babel}", flush=True)
-    _babel_ws = await websockets.connect(cfg.babel)
 
-    data = json.loads(await _babel_ws.recv())
-    print(f"[Babel ] connected  user_id={data.get('user_id')}", flush=True)
+    async with _babel_lock:
+        if _babel_ws and not _babel_ws.closed:
+            return True
 
-    await _babel_ws.send(json.dumps({
-        "type":      "join_room",
-        "room_code": cfg.room,
-        "user_lang": cfg.lang,
-        "is_device": True,
-    }))
-    print(f"[Babel ] {await _babel_ws.recv()}", flush=True)
-    print(f"[Babel ] joined room={cfg.room}  lang={cfg.lang}", flush=True)
+        for attempt in range(1, 6):
+            try:
+                log_babel.info("Connecting to %s (attempt %d) ...", cfg.babel, attempt)
+                _babel_ws = await asyncio.wait_for(
+                    websockets.connect(cfg.babel), timeout=5
+                )
+
+                data = json.loads(await _babel_ws.recv())
+                log_babel.info("Connected — user_id=%s", data.get("user_id"))
+
+                await _babel_ws.send(json.dumps({
+                    "type":      "join_room",
+                    "room_code": cfg.room,
+                    "user_lang": cfg.lang,
+                    "is_device": True,
+                }))
+                join_resp = json.loads(await _babel_ws.recv())
+                log_babel.info("Joined room=%s lang=%s (room_size=%s)",
+                               cfg.room, cfg.lang, join_resp.get("room_size"))
+                return True
+
+            except Exception as exc:
+                log_babel.warning("Connection failed: %s", exc)
+                _babel_ws = None
+                if attempt < 5:
+                    wait = min(2 ** attempt, 10)
+                    log_babel.info("Retrying in %ds ...", wait)
+                    await asyncio.sleep(wait)
+
+        log_babel.error("Could not connect to Babel after 5 attempts")
+        return False
+
 
 async def _send_utterance(text: str):
-    if _babel_ws and not _babel_ws.closed:
+    global _babel_ws
+
+    if not await _ensure_babel():
+        log_babel.error("Dropping utterance (no Babel connection): %s", text[:80])
+        return
+
+    try:
         await _babel_ws.send(json.dumps({
             "type":          "utterance",
             "original_text": text,
         }))
-        print(f'[Babel ] >> "{text[:100]}"', flush=True)
+        log_babel.info('>> "%s"', text[:120])
+    except Exception as exc:
+        log_babel.warning("Send failed (%s), will reconnect next time", exc)
+        _babel_ws = None
 
 # ---- ESP32 handler ----------------------------------------------------------
 async def esp32_handler(ws):
     addr = ws.remote_address
-    print(f"[ESP32 ] connected  {addr}", flush=True)
+    log_esp.info("Device connected from %s", addr)
 
-    buf      = bytearray()
-    loop     = asyncio.get_running_loop()
+    buf       = bytearray()
+    loop      = asyncio.get_running_loop()
     msg_count = 0
+    t_start   = time.monotonic()
 
     async def _do_transcribe(pcm: bytes):
         secs = len(pcm) / (SAMPLE_RATE * 2)
-        print(f"[STT   ] transcribing {secs:.1f}s ...", flush=True)
+        log_stt.info("Transcribing %.1fs of audio ...", secs)
         try:
+            t0 = time.monotonic()
             text = await loop.run_in_executor(None, _transcribe, pcm)
+            elapsed = time.monotonic() - t0
             if text:
+                log_stt.info("Result (%.1fs): \"%s\"", elapsed, text[:120])
                 await _send_utterance(text)
             else:
-                print("[STT   ] silence -- skipped", flush=True)
+                log_stt.info("Silence (%.1fs) — skipped", elapsed)
         except Exception as exc:
-            print(f"[STT   ] error: {exc}", flush=True)
+            log_stt.error("Transcription error: %s", exc)
 
     try:
         async for msg in ws:
@@ -93,7 +154,7 @@ async def esp32_handler(ws):
                 continue
             msg_count += 1
             if msg_count == 1:
-                print(f"[ESP32 ] first audio frame  {len(msg)} bytes", flush=True)
+                log_esp.info("First audio frame: %d bytes", len(msg))
             buf.extend(msg)
 
             if len(buf) >= CHUNK_BYTES:
@@ -102,27 +163,35 @@ async def esp32_handler(ws):
                 await _do_transcribe(pcm)
 
     except websockets.exceptions.ConnectionClosed as e:
-        print(f"[ESP32 ] closed: code={e.code} frames={msg_count}", flush=True)
+        log_esp.info("Connection closed: code=%s, received %d frames", e.code, msg_count)
 
     if len(buf) >= MIN_BYTES:
-        print(f"[STT   ] flushing {len(buf) / (SAMPLE_RATE * 2):.1f}s on disconnect ...", flush=True)
+        log_stt.info("Flushing %.1fs of buffered audio on disconnect ...",
+                     len(buf) / (SAMPLE_RATE * 2))
         await _do_transcribe(bytes(buf))
 
-    print(f"[ESP32 ] disconnected  frames={msg_count}", flush=True)
+    elapsed = time.monotonic() - t_start
+    log_esp.info("Disconnected after %.0fs — %d audio frames total", elapsed, msg_count)
 
 # ---- Main -------------------------------------------------------------------
 async def main():
-    await _connect_babel()
+    connected = await _ensure_babel()
+    if not connected:
+        log_babel.warning("Starting without Babel — will retry when ESP sends audio")
 
     async with websockets.serve(esp32_handler, "0.0.0.0", cfg.port,
                                 ping_interval=None, ping_timeout=None,
                                 max_size=None):
-        print("=" * 52, flush=True)
-        print(f"  ESP32  ws  -> 0.0.0.0:{cfg.port}", flush=True)
-        print(f"  Babel  ws  -> {cfg.babel}", flush=True)
-        print(f"  Room       -> {cfg.room}", flush=True)
-        print(f"  Language   -> {cfg.lang}", flush=True)
-        print("=" * 52, flush=True)
+        print()
+        print("=" * 56)
+        print(f"  ESP32-to-Babel Bridge")
+        print(f"  ESP32 listens on   ws://0.0.0.0:{cfg.port}")
+        print(f"  Babel server       {cfg.babel}")
+        print(f"  Room               {cfg.room}")
+        print(f"  Language            {cfg.lang}")
+        print(f"  Whisper model       {cfg.model}")
+        print("=" * 56)
+        print()
         await asyncio.get_running_loop().create_future()
 
 asyncio.run(main())
