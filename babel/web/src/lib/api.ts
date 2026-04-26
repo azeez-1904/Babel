@@ -1,4 +1,4 @@
-import type { RoomSummaryResponse } from './types';
+import type { LessonResponse, RoomSummaryResponse } from './types';
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL ?? 'ws://localhost:8080';
 
@@ -33,4 +33,16 @@ export function finalizeRoomSummary(roomCode: string, lang: string) {
   return requestSummary(roomSummaryPath(roomCode, lang, 'finalize'), {
     method: 'POST',
   });
+}
+
+export async function getRoomLesson(roomCode: string, userLang: string, targetLang: string): Promise<LessonResponse> {
+  const code = encodeURIComponent(roomCode.trim().toUpperCase());
+  const res = await fetch(`${API_BASE}/rooms/${code}/lesson?lang=${encodeURIComponent(userLang)}&target_lang=${encodeURIComponent(targetLang)}`);
+  if (!res.ok) {
+    const message = res.status === 404
+      ? 'No conversation transcript found for that room.'
+      : 'Could not generate lesson.';
+    throw new Error(message);
+  }
+  return res.json() as Promise<LessonResponse>;
 }

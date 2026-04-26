@@ -38,6 +38,24 @@ export interface RoomSummary {
   transcript_count: number;
 }
 
+export interface LessonPhrase {
+  id: string;
+  original: string;
+  phonetic: string;
+  translation: string;
+  category: 'greeting' | 'question' | 'technical' | 'common_response' | 'expression';
+  context: string;
+  difficulty: 'beginner' | 'intermediate' | 'advanced';
+}
+
+export interface LessonCache {
+  room_code: string;
+  source_lang: string;
+  target_lang: string;
+  phrases: LessonPhrase[];
+  created_at: number;
+}
+
 export interface RoomArchive {
   room_code: string;
   transcript: TranscriptEntry[];
@@ -45,6 +63,7 @@ export interface RoomArchive {
   follow_up_questions: string[];
   summaries?: Record<string, RoomSummary>;
   summary?: RoomSummary;
+  lessons?: Record<string, LessonCache>;
   updated_at: number;
 }
 
@@ -193,4 +212,19 @@ export async function saveSummary(
 export async function getArchive(roomCode: string) {
   await ensureLoaded();
   return archives.get(normalizeRoomCode(roomCode)) ?? null;
+}
+
+export async function saveLesson(roomCode: string, lesson: LessonCache) {
+  const archive = await getOrCreateArchive(roomCode);
+  archive.lessons = archive.lessons ?? {};
+  const key = `${lesson.source_lang}:${lesson.target_lang}`;
+  archive.lessons[key] = lesson;
+  archive.updated_at = Date.now();
+  await queuePersist();
+  return lesson;
+}
+
+export function getLessonFromArchive(archive: RoomArchive, sourceLang: string, targetLang: string): LessonCache | null {
+  const key = `${sourceLang}:${targetLang}`;
+  return archive.lessons?.[key] ?? null;
 }

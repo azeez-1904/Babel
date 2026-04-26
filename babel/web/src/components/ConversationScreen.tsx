@@ -16,6 +16,7 @@ interface Props {
   myUserId: string;
   roomSize: number;
   onLeave: () => void;
+  onLesson: (roomCode: string, userLang: string, targetLang: string) => void;
   send: (payload: object) => void;
   onMessage: (type: string, handler: (msg: Record<string, unknown>) => void) => () => void;
 }
@@ -395,11 +396,13 @@ function SummaryPanel({
   loading,
   summary,
   onClose,
+  onLearnPhrases,
 }: {
   visible: boolean;
   loading: boolean;
   summary: RoomSummary | null;
   onClose: () => void;
+  onLearnPhrases?: () => void;
 }) {
   return (
     <AnimatePresence>
@@ -458,6 +461,19 @@ function SummaryPanel({
                     </div>
                   </div>
                 )}
+                {onLearnPhrases && (
+                  <button
+                    onClick={onLearnPhrases}
+                    className="w-full py-3.5 rounded-2xl text-white font-medium text-sm transition-all active:scale-[0.97] mt-2"
+                    style={{
+                      background: 'linear-gradient(135deg, #E8744C 0%, #D4973A 100%)',
+                      fontFamily: 'DM Sans',
+                      boxShadow: '0 4px 20px rgba(232,116,76,0.35)',
+                    }}
+                  >
+                    Learn phrases from this conversation
+                  </button>
+                )}
               </div>
             ) : (
               <p className="text-charcoal/45 text-sm" style={{ fontFamily: 'DM Sans' }}>
@@ -474,7 +490,7 @@ function SummaryPanel({
 let utteranceCounter = 0;
 
 export function ConversationScreen({
-  roomCode, myLang, myUserId, roomSize, onLeave, send, onMessage,
+  roomCode, myLang, myUserId, roomSize, onLeave, onLesson, send, onMessage,
 }: Props) {
   const [orbState, setOrbState] = useState<OrbState>('idle');
   const [utterances, setUtterances] = useState<Utterance[]>([]);
@@ -956,6 +972,11 @@ export function ConversationScreen({
         loading={summaryLoading}
         summary={summary}
         onClose={() => setSummaryOpen(false)}
+        onLearnPhrases={() => {
+          const peerLang = peersWithoutMe.find(p => p.lang !== currentLang)?.lang;
+          const target = peerLang ?? (currentLang === 'en-US' ? 'es-ES' : 'en-US');
+          onLesson(roomCode, currentLang, target);
+        }}
       />
     </div>
   );

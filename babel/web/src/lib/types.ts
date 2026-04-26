@@ -1,5 +1,5 @@
 export type OrbState = 'idle' | 'listening' | 'thinking' | 'speaking' | 'error' | 'connecting';
-export type Screen = 'hero' | 'conversation';
+export type Screen = 'hero' | 'conversation' | 'lesson' | 'solo';
 
 export interface Utterance {
   id: string;
@@ -59,6 +59,55 @@ export interface RoomSummaryResponse {
   transcript: TranscriptEntry[];
   transcript_count: number;
   updated_at: number;
+}
+
+// ─── Language Learning Mode types ─────────────────────────────────────────────
+
+export interface LessonPhrase {
+  id: string;
+  original: string;
+  phonetic: string;
+  translation: string;
+  category: 'greeting' | 'question' | 'technical' | 'common_response' | 'expression';
+  context: string;
+  difficulty: 'beginner' | 'intermediate' | 'advanced';
+}
+
+export interface LessonResponse {
+  room_code: string;
+  source_lang: string;
+  target_lang: string;
+  phrases: LessonPhrase[];
+}
+
+// ─── Solo Practice Mode types ─────────────────────────────────────────────────
+
+export interface VocabCard {
+  word: string;
+  phonetic: string;
+  translation: string;
+  example_sentence: string;
+  example_translation: string;
+}
+
+export interface SoloResponse {
+  translation: string;
+  phonetic: string;
+  correction?: string;
+  correction_note?: string;
+  encouragement: string;
+  vocab_cards: VocabCard[];
+  suggested_reply: string;
+  suggested_reply_translation: string;
+  suggested_reply_phonetic: string;
+  difficulty_level: 'beginner' | 'intermediate' | 'advanced';
+}
+
+export interface SoloSummary {
+  total_exchanges: number;
+  words_learned: VocabCard[];
+  phrases_practiced: string[];
+  tips: string[];
 }
 
 export const LANGUAGES: { code: string; label: string; flag: string }[] = [
