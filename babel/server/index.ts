@@ -47,6 +47,7 @@ interface TranslationResult {
 
 interface TechnicalAnalysisResult {
   technical_notes: Omit<TechnicalNote, 'id' | 'created_at'>[];
+  remove_note_ids?: string[];
 }
 
 interface SummaryResult {
@@ -170,22 +171,45 @@ Response schema (JSON only):
   return parseClaudeJson<TranslationResult>(content.text);
 }
 
-async function analyzeTechnicalLanguage(text: string): Promise<TechnicalAnalysisResult> {
+function recentContextForNotes(archive: RoomArchive) {
+  return archive.transcript
+    .slice(-8)
+    .map(entry => `${entry.from_user} (${entry.source_lang}): ${entry.original_text}`)
+    .join('\n');
+}
+
+async function analyzeTechnicalLanguage(text: string, archive: RoomArchive): Promise<TechnicalAnalysisResult> {
   const msg = await anthropic.messages.create({
     model: 'claude-sonnet-4-5',
-    max_tokens: 900,
-    system: `You explain technical language in simple terms for people in a live conversation.
+    max_tokens: 1100,
+    system: `You create high-quality technical notes for people in a live conversation.
 
 Rules:
-- Detect specialized terms from any domain: medical, legal, engineering, finance, education, science, government, or other jargon.
-- Be conservative. If the phrase is ordinary everyday language, return an empty technical_notes array.
-- Explain what the phrase means in plain language without giving professional advice.
-- Suggest practical follow-up questions someone could ask to understand the issue better.
+- Use the full recent conversation context, not just the latest sentence.
+- Only create a note when it would genuinely help a normal person understand the conversation.
+- Do NOT create notes for greetings, casual chat, song lyrics, ordinary words, or terms already explained well by an existing note.
+- Speech recognition may mishear technical terms. Correct obvious mistakes using context before creating a note.
+- If an earlier phrase conflicts with later context, prefer the interpretation that makes technical sense. Example: "GPS pins" near ESP32, input/output, sensors, or device control should be treated as "GPIO pins"; do not make a GPS note unless location/navigation is clearly discussed.
+- The "phrase" should be the corrected technical phrase users should remember.
+- "simple_explanation" should explain the term plainly.
+- "conversation_context" should explain what that term means in THIS conversation specifically.
+- "why_it_matters" should say why this concept matters for the user's situation, not a generic dictionary reason.
+- Suggest practical follow-up questions that fit this conversation.
+- Some terms have multiple technical meanings across domains. If the recent context does not clearly choose one, briefly mention the plausible meanings in simple_explanation and ask a clarification question. Example: "transformer" could mean an electrical device that changes voltage, or an AI/neural network architecture; ask which one they mean.
+- If context clearly chooses one meaning, explain that meaning but you may briefly note the other common meaning only if it would prevent confusion.
+- If an existing note is wrong, generic, stale, duplicated, or based on a misheard term disproven by later context, include its id in remove_note_ids.
+- If the correct meaning is uncertain and there are not clear plausible meanings, return no note instead of guessing.
+- Prefer 0 or 1 excellent note per utterance. Return at most 2.
+- Confidence must be 0.7 or higher for any emitted note.
+- Do not give professional medical, legal, financial, or safety advice.
 - Return ONLY valid JSON — no markdown, no explanation, no surrounding text.
 
 Response schema:
-{"technical_notes":[{"phrase":"<exact phrase>","simple_explanation":"<simple meaning>","why_it_matters":"<why a normal person might need to know this>","follow_up_questions":["<question>"],"confidence":0.85,"source_text":"<source utterance>"}]}`,
-    messages: [{ role: 'user', content: `Analyze this utterance for technical language:\n"${text}"` }],
+{"technical_notes":[{"phrase":"<corrected technical phrase>","simple_explanation":"<simple meaning>","conversation_context":"<what it means in this conversation>","why_it_matters":"<why it matters here>","follow_up_questions":["<question>"],"confidence":0.85,"source_text":"<source utterance>"}],"remove_note_ids":["<existing note id to remove>"]}`,
+    messages: [{
+      role: 'user',
+      content: `Latest utterance:\n"${text}"\n\nRecent transcript:\n${recentContextForNotes(archive)}\n\nExisting notes:\n${JSON.stringify(archive.technical_notes.slice(-10))}`,
+    }],
   });
 
   const content = msg.content[0];
@@ -193,15 +217,18 @@ Response schema:
   const result = parseClaudeJson<TechnicalAnalysisResult>(content.text);
   return {
     technical_notes: (result.technical_notes ?? [])
-      .filter(note => note.phrase && note.simple_explanation)
+      .filter(note => note.phrase && note.simple_explanation && Number(note.confidence) >= 0.7)
+      .slice(0, 2)
       .map(note => ({
         phrase: String(note.phrase).slice(0, 120),
         simple_explanation: String(note.simple_explanation).slice(0, 500),
+        conversation_context: String(note.conversation_context ?? '').slice(0, 500),
         why_it_matters: String(note.why_it_matters ?? '').slice(0, 500),
         follow_up_questions: (note.follow_up_questions ?? []).map(String).filter(Boolean).slice(0, 3),
         confidence: Math.max(0, Math.min(1, Number(note.confidence) || 0)),
         source_text: String(note.source_text || text).slice(0, 1000),
       })),
+    remove_note_ids: (result.remove_note_ids ?? []).map(String).filter(Boolean).slice(0, 10),
   };
 }
 
@@ -209,21 +236,30 @@ function transcriptForPrompt(archive: RoomArchive) {
   return archive.transcript
     .slice(-30)
     .map(entry => {
-      const translated = entry.translations[0]?.translated_text;
-      return `${new Date(entry.timestamp).toISOString()} ${entry.from_user}: ${entry.original_text}${translated ? `\nTranslated: ${translated}` : ''}`;
+      const translations = entry.translations
+        .map(t => `${langName(t.target_lang)}: ${t.translated_text}`)
+        .join('\n');
+      return `${new Date(entry.timestamp).toISOString()} ${entry.from_user} (${entry.source_lang}): ${entry.original_text}${translations ? `\nTranslations:\n${translations}` : ''}`;
     })
     .join('\n\n');
 }
 
-async function generateRoomSummary(archive: RoomArchive): Promise<RoomSummary> {
+async function generateRoomSummary(archive: RoomArchive, targetLang: string): Promise<RoomSummary> {
+  const targetLangName = langName(targetLang);
   const msg = await anthropic.messages.create({
     model: 'claude-sonnet-4-5',
-    max_tokens: 1000,
-    system: `Summarize a multilingual conversation in simple language.
+    max_tokens: 1200,
+    system: `Summarize a multilingual conversation in simple language for the person reading it.
 
 Rules:
+- Write the entire response in ${targetLangName}.
 - Write for a normal person who may not understand technical details.
-- Do not invent facts. Only summarize what was said.
+- Produce a logically correct summary, not a raw transcript recap.
+- Speech recognition may mishear technical terms. Resolve likely misheard words using the full conversation context.
+- If an earlier word conflicts with later context, prefer the interpretation that makes technical sense. Example: if "GPS pins" appears near "ESP32", "input/output", "control devices", or "GPIO", summarize it as GPIO pins and do not mention GPS unless location/navigation was clearly discussed.
+- Do not preserve contradictions, impossible claims, or obvious transcription mistakes in the summary. Correct them silently when context is strong.
+- If the correct meaning is uncertain, say it was unclear instead of presenting a questionable fact.
+- Do not invent new facts beyond the conversation.
 - Separate what happened from useful follow-up questions.
 - If the conversation includes professional topics like medical, legal, or financial issues, do not give advice; suggest questions to ask a qualified professional.
 - Return ONLY valid JSON — no markdown, no surrounding text.
@@ -241,6 +277,7 @@ Response schema:
   const result = parseClaudeJson<SummaryResult>(content.text);
   return {
     room_code: archive.room_code,
+    language: targetLang,
     simple_summary: String(result.simple_summary || 'No summary is available yet.'),
     key_points: (result.key_points ?? []).map(String).filter(Boolean).slice(0, 8),
     suggested_follow_up_questions: (result.suggested_follow_up_questions ?? []).map(String).filter(Boolean).slice(0, 8),
@@ -249,27 +286,55 @@ Response schema:
   };
 }
 
+async function getSummaryForLanguage(archive: RoomArchive, targetLang: string) {
+  return archive.summaries?.[targetLang] ?? null;
+}
+
+async function generateAndSaveSummary(archive: RoomArchive, targetLang: string) {
+  const summary = await generateRoomSummary(archive, targetLang);
+  return saveSummary(archive.room_code, targetLang, summary);
+}
+
+async function broadcastLocalizedSummaries(roomCode: string, room: Set<string>, archive: RoomArchive) {
+  const summariesByLang = new Map<string, RoomSummary>();
+
+  for (const uid of room) {
+    const client = clients.get(uid);
+    if (!client || client.isDevice || client.ws.readyState !== WebSocket.OPEN) continue;
+
+    const lang = client.lang ?? 'en-US';
+    let summary = summariesByLang.get(lang);
+    if (!summary) {
+      summary = await generateAndSaveSummary(archive, lang);
+      summariesByLang.set(lang, summary);
+    }
+
+    send(client, { type: 'summary_update', room_code: roomCode, summary });
+  }
+}
+
 async function analyzeAndBroadcast(roomCode: string, text: string) {
   try {
     const room = rooms.get(roomCode);
     if (!room) return;
 
-    const analysis = await analyzeTechnicalLanguage(text);
-    if (analysis.technical_notes.length > 0) {
-      const archive = await mergeTechnicalNotes(roomCode, analysis.technical_notes);
+    const archive = await getArchive(roomCode);
+    if (!archive) return;
+
+    const analysis = await analyzeTechnicalLanguage(text, archive);
+    if (analysis.technical_notes.length > 0 || (analysis.remove_note_ids?.length ?? 0) > 0) {
+      const updatedArchive = await mergeTechnicalNotes(roomCode, analysis.technical_notes, analysis.remove_note_ids ?? []);
       broadcastHumans(room, {
         type: 'technical_notes_update',
-        room_code: archive.room_code,
-        technical_notes: archive.technical_notes,
-        follow_up_questions: archive.follow_up_questions,
+        room_code: updatedArchive.room_code,
+        technical_notes: updatedArchive.technical_notes,
+        follow_up_questions: updatedArchive.follow_up_questions,
       });
     }
 
-    const archive = await getArchive(roomCode);
-    if (archive && archive.transcript.length >= 2 && archive.transcript.length % 3 === 0) {
-      const summary = await generateRoomSummary(archive);
-      await saveSummary(roomCode, summary);
-      broadcastHumans(room, { type: 'summary_update', summary });
+    const updatedArchive = await getArchive(roomCode);
+    if (updatedArchive && updatedArchive.transcript.length >= 2 && updatedArchive.transcript.length % 3 === 0) {
+      await broadcastLocalizedSummaries(roomCode, room, updatedArchive);
     }
   } catch (err) {
     console.error(`[room ${roomCode}] technical analysis error:`, err);
@@ -439,19 +504,19 @@ function handleDisconnect(client: BabelClient) {
   console.log(`[disconnect] ${client.userId}`);
 }
 
-async function handleSummaryRequest(roomCode: string) {
+async function handleSummaryRequest(roomCode: string, targetLang: string) {
   const archive = await getArchive(roomCode);
   if (!archive) return null;
 
-  if (!archive.summary && archive.transcript.length > 0) {
-    const summary = await generateRoomSummary(archive);
-    await saveSummary(roomCode, summary);
+  let summary = await getSummaryForLanguage(archive, targetLang);
+  if (!summary && archive.transcript.length > 0) {
+    summary = await generateAndSaveSummary(archive, targetLang);
   }
 
   const updatedArchive = await getArchive(roomCode);
   return updatedArchive ? {
     room_code: updatedArchive.room_code,
-    summary: updatedArchive.summary ?? null,
+    summary: updatedArchive.summaries?.[targetLang] ?? summary ?? null,
     technical_notes: updatedArchive.technical_notes,
     follow_up_questions: updatedArchive.follow_up_questions,
     transcript_count: updatedArchive.transcript.length,
@@ -459,14 +524,13 @@ async function handleSummaryRequest(roomCode: string) {
   } : null;
 }
 
-async function handleFinalizeRequest(roomCode: string) {
+async function handleFinalizeRequest(roomCode: string, targetLang: string) {
   const archive = await getArchive(roomCode);
   if (!archive) return null;
   if (archive.transcript.length > 0) {
-    const summary = await generateRoomSummary(archive);
-    await saveSummary(roomCode, summary);
+    await generateAndSaveSummary(archive, targetLang);
   }
-  return handleSummaryRequest(roomCode);
+  return handleSummaryRequest(roomCode, targetLang);
 }
 
 // ─── Server ───────────────────────────────────────────────────────────────────
@@ -492,10 +556,11 @@ const httpServer = createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
   const summaryMatch = url.pathname.match(/^\/rooms\/([^/]+)\/summary$/);
   const finalizeMatch = url.pathname.match(/^\/rooms\/([^/]+)\/finalize$/);
+  const requestedLang = url.searchParams.get('lang') ?? 'en-US';
 
   try {
     if (summaryMatch && req.method === 'GET') {
-      const payload = await handleSummaryRequest(summaryMatch[1]);
+      const payload = await handleSummaryRequest(summaryMatch[1], requestedLang);
       if (!payload) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Room summary not found' }));
@@ -507,15 +572,16 @@ const httpServer = createServer(async (req, res) => {
     }
 
     if (finalizeMatch && req.method === 'POST') {
-      const payload = await handleFinalizeRequest(finalizeMatch[1]);
+      const payload = await handleFinalizeRequest(finalizeMatch[1], requestedLang);
       if (!payload) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Room summary not found' }));
         return;
       }
       const room = rooms.get(normalizeRoomCode(finalizeMatch[1]));
-      if (room && payload.summary) {
-        broadcastHumans(room, { type: 'summary_update', summary: payload.summary });
+      const archive = await getArchive(finalizeMatch[1]);
+      if (room && archive) {
+        await broadcastLocalizedSummaries(normalizeRoomCode(finalizeMatch[1]), room, archive);
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(payload));

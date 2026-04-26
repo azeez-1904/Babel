@@ -84,7 +84,7 @@ export function HeroScreen({ onStart, wsStatus }: Props) {
     setSummaryLoading(true);
     setSummaryResult(null);
     try {
-      const result = await getRoomSummary(code);
+      const result = await getRoomSummary(code, lang);
       setSummaryResult(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load summary');
@@ -454,6 +454,34 @@ export function HeroScreen({ onStart, wsStatus }: Props) {
             <p className="text-charcoal/50 text-sm mb-6 text-center" style={{ fontFamily: 'DM Sans' }}>
               Enter a room code to view the saved simple-language summary.
             </p>
+
+            <div className="w-full mb-4">
+              <label className="block text-xs uppercase tracking-widest text-charcoal/40 mb-2 text-center"
+                     style={{ fontFamily: 'DM Sans', fontSize: '0.65rem' }}>
+                Summary language
+              </label>
+              <div className="relative">
+                <select
+                  value={lang}
+                  onChange={e => {
+                    setLang(e.target.value);
+                    setSummaryResult(null);
+                  }}
+                  className="w-full appearance-none rounded-2xl border border-fog text-charcoal text-center
+                             py-3.5 px-4 text-base cursor-pointer outline-none focus:border-coral/60"
+                  style={{ background: 'rgba(255,255,255,0.7)', fontFamily: 'DM Sans' }}
+                >
+                  {LANGUAGES.map(l => (
+                    <option key={l.code} value={l.code}>{l.flag} {l.label}</option>
+                  ))}
+                </select>
+                <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-charcoal/40">
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </div>
+              </div>
+            </div>
 
             <div className="w-full mb-4">
               <input

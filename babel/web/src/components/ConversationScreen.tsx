@@ -293,12 +293,10 @@ function PeersPanel({ peers, myUserId }: { peers: Peer[]; myUserId: string }) {
 function NotesPanel({
   visible,
   notes,
-  followUpQuestions,
   onClose,
 }: {
   visible: boolean;
   notes: TechnicalNote[];
-  followUpQuestions: string[];
   onClose: () => void;
 }) {
   return (
@@ -326,7 +324,7 @@ function NotesPanel({
                   Technical notes
                 </h2>
                 <p className="text-charcoal/45 text-sm" style={{ fontFamily: 'DM Sans' }}>
-                  Shared plain-language explanations for this room.
+                  Shared explanations based on this conversation.
                 </p>
               </div>
               <button
@@ -342,7 +340,7 @@ function NotesPanel({
 
             {notes.length === 0 ? (
               <p className="text-charcoal/45 text-sm leading-relaxed" style={{ fontFamily: 'DM Sans' }}>
-                When someone says something technical, a simple explanation and useful follow-up questions will appear here for both people.
+                When something technical is important to understand, a context-aware explanation and useful follow-up questions will appear here.
               </p>
             ) : (
               <div className="space-y-3">
@@ -358,6 +356,14 @@ function NotesPanel({
                     <p className="text-ink leading-snug mb-2" style={{ fontFamily: 'DM Sans', fontSize: '0.95rem' }}>
                       {note.simple_explanation}
                     </p>
+                    {note.conversation_context && (
+                      <p
+                        className="text-charcoal/60 text-sm leading-snug mb-3 rounded-xl px-3 py-2"
+                        style={{ fontFamily: 'DM Sans', background: 'rgba(232,116,76,0.08)' }}
+                      >
+                        In this conversation: {note.conversation_context}
+                      </p>
+                    )}
                     {note.why_it_matters && (
                       <p className="text-charcoal/50 text-sm leading-snug mb-3" style={{ fontFamily: 'DM Sans' }}>
                         {note.why_it_matters}
@@ -377,20 +383,6 @@ function NotesPanel({
               </div>
             )}
 
-            {followUpQuestions.length > 0 && (
-              <div className="mt-5 rounded-2xl p-4 bg-coral/10">
-                <h3 className="text-coral text-xs uppercase tracking-wider mb-2" style={{ fontFamily: 'DM Sans' }}>
-                  Follow-up questions
-                </h3>
-                <div className="space-y-2">
-                  {followUpQuestions.slice(-5).map(question => (
-                    <p key={question} className="text-charcoal/70 text-sm" style={{ fontFamily: 'DM Sans' }}>
-                      {question}
-                    </p>
-                  ))}
-                </div>
-              </div>
-            )}
           </motion.div>
         </motion.div>
       )}
@@ -512,7 +504,6 @@ export function ConversationScreen({
   const [toast, setToast] = useState('');
   const [toastVisible, setToastVisible] = useState(false);
   const [technicalNotes, setTechnicalNotes] = useState<TechnicalNote[]>([]);
-  const [followUpQuestions, setFollowUpQuestions] = useState<string[]>([]);
   const [notesOpen, setNotesOpen] = useState(false);
   const [summary, setSummary] = useState<RoomSummary | null>(null);
   const [summaryOpen, setSummaryOpen] = useState(false);
@@ -667,7 +658,6 @@ export function ConversationScreen({
 
       onMessage('technical_notes_update', (msg) => {
         setTechnicalNotes((msg.technical_notes as TechnicalNote[]) ?? []);
-        setFollowUpQuestions((msg.follow_up_questions as string[]) ?? []);
         showToast('Technical note added');
       }),
 
@@ -728,10 +718,9 @@ export function ConversationScreen({
     setSummaryOpen(true);
     setSummaryLoading(true);
     try {
-      const result = await finalizeRoomSummary(roomCode);
+      const result = await finalizeRoomSummary(roomCode, currentLangRef.current);
       setSummary(result.summary);
       setTechnicalNotes(result.technical_notes);
-      setFollowUpQuestions(result.follow_up_questions);
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Could not create summary');
     } finally {
@@ -974,7 +963,6 @@ export function ConversationScreen({
       <NotesPanel
         visible={notesOpen}
         notes={technicalNotes}
-        followUpQuestions={followUpQuestions}
         onClose={() => setNotesOpen(false)}
       />
       <SummaryPanel

@@ -18,6 +18,7 @@ export interface TechnicalNote {
   id: string;
   phrase: string;
   simple_explanation: string;
+  conversation_context?: string;
   why_it_matters: string;
   follow_up_questions: string[];
   confidence: number;
@@ -27,6 +28,7 @@ export interface TechnicalNote {
 
 export interface RoomSummary {
   room_code: string;
+  language: string;
   simple_summary: string;
   key_points: string[];
   suggested_follow_up_questions: string[];
