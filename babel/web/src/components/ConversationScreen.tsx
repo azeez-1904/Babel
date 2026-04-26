@@ -621,8 +621,8 @@ export function ConversationScreen({
           error: msg.error as boolean | undefined,
         };
         setUtterances(prev => [...prev, u]);
-        queueSpeak(u.displayed_text, myLang);
-        showToast('Translation received');
+        queueSpeak(u.displayed_text, currentLangRef.current);
+        showToast(u.error ? 'Translation failed; showing original text' : 'Translation received');
       }),
 
       onMessage('utterance_echo', (msg) => {
@@ -632,7 +632,7 @@ export function ConversationScreen({
           isMine: true,
           original_text: msg.original_text as string,
           displayed_text: msg.original_text as string,
-          source_lang: myLang,
+          source_lang: currentLangRef.current,
           distress_flag: false,
           tone_note: 'casual',
           timestamp: msg.timestamp as number,
@@ -677,7 +677,7 @@ export function ConversationScreen({
     ];
 
     return () => unsubs.forEach(u => u());
-  }, [onMessage, myLang, myUserId, queueSpeak, showToast]);
+  }, [onMessage, myUserId, queueSpeak, showToast]);
 
   // ── Speech recognition ──────────────────────────────────────────────────────
   const handleFinal = useCallback((text: string) => {

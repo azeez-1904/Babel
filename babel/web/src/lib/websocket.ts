@@ -52,7 +52,21 @@ export class BabelWS {
   close() {
     this.intentionalClose = true;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-    this.ws?.close();
+    const ws = this.ws;
+    if (!ws) return;
+
+    if (ws.readyState === WebSocket.CONNECTING) {
+      // React dev mode can unmount immediately after mount. Closing a socket
+      // while it is still connecting creates a noisy browser warning.
+      ws.onopen = () => ws.close();
+      ws.onmessage = null;
+      ws.onerror = null;
+      ws.onclose = null;
+      return;
+    }
+
+    if (ws.readyState === WebSocket.OPEN) ws.close();
+    this.ws = null;
   }
 
   private emit(msg: Record<string, unknown>) {

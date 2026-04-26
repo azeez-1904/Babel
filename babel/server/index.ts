@@ -132,6 +132,7 @@ function parseClaudeJson<T>(text: string) {
 }
 
 async function translate(text: string, targetLang: string): Promise<TranslationResult> {
+  const targetLangName = langName(targetLang);
   const msg = await anthropic.messages.create({
     model: 'claude-sonnet-4-5',
     max_tokens: 512,
