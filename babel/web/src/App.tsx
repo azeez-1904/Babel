@@ -81,44 +81,45 @@ export default function App() {
         )}
 
         {screen === 'conversation' && (
-        ) : inputMode === 'text' ? (
-          <motion.div
-            key="text-conversation"
-            className="absolute inset-0"
-            initial={{ opacity: 0, y: 40 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-          >
-            <TextConversationScreen
-              roomCode={roomCode}
-              myLang={myLang}
-              myUserId={myUserId}
-              onLeave={handleLeave}
-              send={send}
-              onMessage={on}
-            />
-          </motion.div>
-        ) : (
-          <motion.div
-            key="conversation"
-            className="absolute inset-0"
-            initial={{ opacity: 0, scale: 1.03 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-          >
-            <ConversationScreen
-              roomCode={roomCode}
-              myLang={myLang}
-              myUserId={myUserId}
-              roomSize={roomSize}
-              onLeave={handleLeave}
-              onLesson={handleLesson}
-              send={send}
-              onMessage={on}
-            />
-          </motion.div>
+          inputMode === 'text' ? (
+            <motion.div
+              key="text-conversation"
+              className="absolute inset-0"
+              initial={{ opacity: 0, y: 40 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+            >
+              <TextConversationScreen
+                roomCode={roomCode}
+                myLang={myLang}
+                myUserId={myUserId}
+                onLeave={handleLeave}
+                send={send}
+                onMessage={on}
+              />
+            </motion.div>
+          ) : (
+            <motion.div
+              key="conversation"
+              className="absolute inset-0"
+              initial={{ opacity: 0, scale: 1.03 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+            >
+              <ConversationScreen
+                roomCode={roomCode}
+                myLang={myLang}
+                myUserId={myUserId}
+                roomSize={roomSize}
+                onLeave={handleLeave}
+                onLesson={handleLesson}
+                send={send}
+                onMessage={on}
+              />
+            </motion.div>
+          )
         )}
 
         {screen === 'lesson' && (

@@ -390,60 +390,32 @@ export function SoloPracticeScreen({ myUserId, onLeave, send, onMessage }: Props
           />
         </div>
 
-        <button
-          onClick={onLeave}
-          className="absolute top-5 left-5 flex items-center gap-1.5 text-charcoal/50 active:opacity-60 z-10"
-          style={{ fontFamily: 'DM Sans', fontSize: '0.875rem' }}
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <path d="M10 12L6 8l4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-          Back
-        </button>
-
         <motion.div
-          className="relative z-10 w-full max-w-md flex flex-col items-center"
+          className="relative z-10 flex flex-col items-center w-full max-w-sm"
           initial={{ opacity: 0, y: 24 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+          transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
         >
-          {/* Icon */}
-          <motion.div
-            className="mb-6 rounded-xl flex items-center justify-center"
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ delay: 0.1, duration: 0.5 }}
-            style={{
-              width: 48, height: 48,
-              background: 'linear-gradient(135deg, #E8744C, #D4973A)',
-              boxShadow: '0 4px 20px rgba(232,116,76,0.35)',
-            }}
+          <button
+            onClick={onLeave}
+            className="self-start mb-8 flex items-center gap-1.5 text-charcoal/50 active:opacity-60"
+            style={{ fontFamily: 'DM Sans', fontSize: '0.875rem' }}
           >
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-              <path d="M12 2a3 3 0 00-3 3v6a3 3 0 006 0V5a3 3 0 00-3-3z" fill="white" />
-              <path d="M19 10a7 7 0 01-14 0" stroke="white" strokeWidth="1.8" strokeLinecap="round" />
-              <path d="M12 17v4M8 21h8" stroke="white" strokeWidth="1.8" strokeLinecap="round" />
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M10 12L6 8l4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
-          </motion.div>
+            Back
+          </button>
 
-          <h1
-            className="text-center mb-2"
-            style={{
-              fontFamily: 'Fraunces, serif',
-              fontSize: 'clamp(2rem, 7vw, 3rem)',
-              fontWeight: 300,
-              color: '#1A1612',
-              letterSpacing: '-0.02em',
-            }}
-          >
+          <h2 style={{ fontFamily: 'Fraunces, serif', fontSize: '2rem', fontWeight: 300, color: '#1A1612' }}
+              className="mb-2 text-center">
             Solo practice
-          </h1>
-          <p className="text-charcoal/50 text-sm mb-10 text-center leading-relaxed" style={{ fontFamily: 'DM Sans' }}>
-            Speak freely and learn with an AI tutor.<br />
-            Get translations, corrections, and vocabulary.
+          </h2>
+          <p className="text-charcoal/50 text-sm mb-8 text-center" style={{ fontFamily: 'DM Sans' }}>
+            Practice speaking with an AI tutor
           </p>
 
-          <div className="w-full mb-5">
+          <div className="w-full mb-6">
             <label className="block text-xs uppercase tracking-widest text-charcoal/40 mb-2 text-center"
                    style={{ fontFamily: 'DM Sans', fontSize: '0.65rem' }}>
               I speak
@@ -453,9 +425,8 @@ export function SoloPracticeScreen({ myUserId, onLeave, send, onMessage }: Props
                 value={nativeLang}
                 onChange={e => setNativeLang(e.target.value)}
                 className="w-full appearance-none rounded-2xl border border-fog text-charcoal text-center
-                           py-3.5 px-4 text-base cursor-pointer outline-none transition-all
-                           focus:border-coral/60 focus:ring-2 focus:ring-coral/15"
-                style={{ background: 'rgba(255,255,255,0.7)', fontFamily: 'DM Sans', backdropFilter: 'blur(8px)' }}
+                           py-3.5 px-4 text-base cursor-pointer outline-none focus:border-coral/60"
+                style={{ background: 'rgba(255,255,255,0.7)', fontFamily: 'DM Sans' }}
               >
                 {LANGUAGES.map(l => (
                   <option key={l.code} value={l.code}>{l.flag} {l.label}</option>
@@ -469,7 +440,7 @@ export function SoloPracticeScreen({ myUserId, onLeave, send, onMessage }: Props
             </div>
           </div>
 
-          <div className="w-full mb-8">
+          <div className="w-full mb-6">
             <label className="block text-xs uppercase tracking-widest text-charcoal/40 mb-2 text-center"
                    style={{ fontFamily: 'DM Sans', fontSize: '0.65rem' }}>
               I want to learn
@@ -479,9 +450,8 @@ export function SoloPracticeScreen({ myUserId, onLeave, send, onMessage }: Props
                 value={targetLang}
                 onChange={e => setTargetLang(e.target.value)}
                 className="w-full appearance-none rounded-2xl border border-fog text-charcoal text-center
-                           py-3.5 px-4 text-base cursor-pointer outline-none transition-all
-                           focus:border-coral/60 focus:ring-2 focus:ring-coral/15"
-                style={{ background: 'rgba(255,255,255,0.7)', fontFamily: 'DM Sans', backdropFilter: 'blur(8px)' }}
+                           py-3.5 px-4 text-base cursor-pointer outline-none focus:border-coral/60"
+                style={{ background: 'rgba(255,255,255,0.7)', fontFamily: 'DM Sans' }}
               >
                 {LANGUAGES.filter(l => l.code !== nativeLang).map(l => (
                   <option key={l.code} value={l.code}>{l.flag} {l.label}</option>
@@ -501,11 +471,10 @@ export function SoloPracticeScreen({ myUserId, onLeave, send, onMessage }: Props
             style={{
               background: 'linear-gradient(135deg, #E8744C 0%, #D4973A 100%)',
               fontFamily: 'DM Sans',
-              boxShadow: '0 4px 24px rgba(232,116,76,0.4), 0 1px 0 rgba(255,255,255,0.15) inset',
-              letterSpacing: '0.01em',
+              boxShadow: '0 4px 24px rgba(232,116,76,0.4)',
             }}
           >
-            Start practicing
+            Start practicing →
           </button>
         </motion.div>
       </div>

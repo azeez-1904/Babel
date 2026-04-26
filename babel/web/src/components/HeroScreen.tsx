@@ -215,7 +215,7 @@ function GradientBackdrop() {
 }
 
 
-export function HeroScreen({ onStart, wsStatus }: Props) {
+export function HeroScreen({ onStart, onLesson, onSolo, wsStatus }: Props) {
   const [mode, setMode] = useState<'home' | 'start' | 'join' | 'text-join' | 'summary'>('home');
   const [lessonTargetLang, setLessonTargetLang] = useState('');
   const [lang, setLang] = useState('en-US');
@@ -421,6 +421,15 @@ export function HeroScreen({ onStart, wsStatus }: Props) {
                 style={{
                   background: 'rgba(255,255,255,0.6)',
                   border: '1.5px solid rgba(42,42,42,0.12)',
+                  fontFamily: 'DM Sans, sans-serif',
+                  backdropFilter: 'blur(8px)',
+                  letterSpacing: '0.01em',
+                }}
+              >
+                Practice solo
+              </button>
+
+              <button
                 onClick={() => setMode('text-join')}
                 disabled={wsStatus !== 'connected'}
                 className="w-full py-4 rounded-2xl font-medium text-base transition-all active:scale-[0.97] flex items-center justify-center gap-2"
@@ -437,7 +446,6 @@ export function HeroScreen({ onStart, wsStatus }: Props) {
                   letterSpacing: '0.01em',
                 }}
               >
-                Practice solo
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
                   <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"
                     fill={wsStatus === 'connected' ? 'rgba(0,122,255,0.15)' : 'rgba(180,180,180,0.2)'}
