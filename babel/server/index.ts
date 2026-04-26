@@ -2,6 +2,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { createServer } from 'http';
 import Anthropic from '@anthropic-ai/sdk';
 
+const HOST = process.env.HOST ?? '0.0.0.0';
 const PORT = parseInt(process.env.PORT ?? '8080');
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -73,7 +74,7 @@ function send(client: BabelClient, payload: object) {
 
 async function translate(text: string, targetLang: string): Promise<TranslationResult> {
   const msg = await anthropic.messages.create({
-    model: 'claude-sonnet-4-5',
+    model: 'claude-sonnet-4-6',
     max_tokens: 512,
     system: `You are a real-time spoken-word interpreter. Translate speech naturally and faithfully.
 
@@ -282,9 +283,10 @@ wss.on('connection', (ws) => {
   send(client, { type: 'connected', user_id: userId });
 });
 
-httpServer.listen(PORT, () => {
-  console.log(`Babel server listening on ws://localhost:${PORT}`);
-  console.log(`Health: http://localhost:${PORT}/health`);
+httpServer.listen(PORT, HOST, () => {
+  console.log(`Babel server listening on ws://${HOST}:${PORT}`);
+  console.log(`ESP bridge target: ws://172.20.10.3:${PORT}`);
+  console.log(`Health: http://172.20.10.3:${PORT}/health`);
   if (!process.env.ANTHROPIC_API_KEY) {
     console.warn('WARNING: ANTHROPIC_API_KEY not set — translation will fail');
   }
