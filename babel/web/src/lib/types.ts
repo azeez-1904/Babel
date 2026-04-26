@@ -14,6 +14,35 @@ export interface Utterance {
   error?: boolean;
 }
 
+export interface TechnicalNote {
+  id: string;
+  phrase: string;
+  simple_explanation: string;
+  why_it_matters: string;
+  follow_up_questions: string[];
+  confidence: number;
+  source_text: string;
+  created_at: number;
+}
+
+export interface RoomSummary {
+  room_code: string;
+  simple_summary: string;
+  key_points: string[];
+  suggested_follow_up_questions: string[];
+  updated_at: number;
+  transcript_count: number;
+}
+
+export interface RoomSummaryResponse {
+  room_code: string;
+  summary: RoomSummary | null;
+  technical_notes: TechnicalNote[];
+  follow_up_questions: string[];
+  transcript_count: number;
+  updated_at: number;
+}
+
 export const LANGUAGES: { code: string; label: string; flag: string }[] = [
   { code: 'en-US', label: 'English',    flag: '🇺🇸' },
   { code: 'es-ES', label: 'Spanish',    flag: '🇪🇸' },

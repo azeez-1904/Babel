@@ -3,7 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { StatusOrb, MiniOrb } from './StatusOrb';
 import { TranscriptView } from './TranscriptView';
 import { useSpeechRecognition, speakText } from '../hooks/useSpeech';
-import type { OrbState, Utterance } from '../lib/types';
+import { finalizeRoomSummary } from '../lib/api';
+import type { OrbState, RoomSummary, TechnicalNote, Utterance } from '../lib/types';
 import { LANGUAGES } from '../lib/types';
 
 interface Peer { userId: string; lang: string; isDevice: boolean }
@@ -179,6 +180,209 @@ function PeersPanel({ peers, myUserId }: { peers: Peer[]; myUserId: string }) {
   );
 }
 
+function NotesPanel({
+  visible,
+  notes,
+  followUpQuestions,
+  onClose,
+}: {
+  visible: boolean;
+  notes: TechnicalNote[];
+  followUpQuestions: string[];
+  onClose: () => void;
+}) {
+  return (
+    <AnimatePresence>
+      {visible && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="absolute inset-0 z-40 flex items-end bg-ink/20"
+          onClick={onClose}
+        >
+          <motion.div
+            initial={{ y: '100%' }}
+            animate={{ y: 0 }}
+            exit={{ y: '100%' }}
+            transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+            onClick={e => e.stopPropagation()}
+            className="w-full max-h-[72%] overflow-y-auto rounded-t-[2rem] px-5 pt-5 pb-8"
+            style={{ background: '#FAF7F2', border: '1px solid rgba(42,42,42,0.08)' }}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 style={{ fontFamily: 'Fraunces, serif', fontSize: '1.6rem', fontWeight: 300 }}>
+                  Technical notes
+                </h2>
+                <p className="text-charcoal/45 text-sm" style={{ fontFamily: 'DM Sans' }}>
+                  Shared plain-language explanations for this room.
+                </p>
+              </div>
+              <button
+                onClick={onClose}
+                className="w-8 h-8 rounded-full bg-charcoal/8 flex items-center justify-center"
+                aria-label="Close technical notes"
+              >
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                  <path d="M9 3L3 9M3 3l6 6" stroke="#2A2A2A" strokeWidth="1.5" strokeLinecap="round"/>
+                </svg>
+              </button>
+            </div>
+
+            {notes.length === 0 ? (
+              <p className="text-charcoal/45 text-sm leading-relaxed" style={{ fontFamily: 'DM Sans' }}>
+                When someone says something technical, a simple explanation and useful follow-up questions will appear here for both people.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {notes.slice().reverse().map(note => (
+                  <div
+                    key={note.id}
+                    className="rounded-2xl p-4"
+                    style={{ background: 'rgba(255,255,255,0.68)', border: '1px solid rgba(42,42,42,0.06)' }}
+                  >
+                    <div className="text-coral text-xs uppercase tracking-wider mb-1" style={{ fontFamily: 'DM Sans' }}>
+                      {note.phrase}
+                    </div>
+                    <p className="text-ink leading-snug mb-2" style={{ fontFamily: 'DM Sans', fontSize: '0.95rem' }}>
+                      {note.simple_explanation}
+                    </p>
+                    {note.why_it_matters && (
+                      <p className="text-charcoal/50 text-sm leading-snug mb-3" style={{ fontFamily: 'DM Sans' }}>
+                        {note.why_it_matters}
+                      </p>
+                    )}
+                    {note.follow_up_questions.length > 0 && (
+                      <div className="space-y-1.5">
+                        {note.follow_up_questions.map(question => (
+                          <p key={question} className="text-charcoal/60 text-sm" style={{ fontFamily: 'DM Sans' }}>
+                            Ask: {question}
+                          </p>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {followUpQuestions.length > 0 && (
+              <div className="mt-5 rounded-2xl p-4 bg-coral/10">
+                <h3 className="text-coral text-xs uppercase tracking-wider mb-2" style={{ fontFamily: 'DM Sans' }}>
+                  Follow-up questions
+                </h3>
+                <div className="space-y-2">
+                  {followUpQuestions.slice(-5).map(question => (
+                    <p key={question} className="text-charcoal/70 text-sm" style={{ fontFamily: 'DM Sans' }}>
+                      {question}
+                    </p>
+                  ))}
+                </div>
+              </div>
+            )}
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+function SummaryPanel({
+  visible,
+  loading,
+  summary,
+  onClose,
+}: {
+  visible: boolean;
+  loading: boolean;
+  summary: RoomSummary | null;
+  onClose: () => void;
+}) {
+  return (
+    <AnimatePresence>
+      {visible && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="absolute inset-0 z-40 flex items-end bg-ink/20"
+          onClick={onClose}
+        >
+          <motion.div
+            initial={{ y: '100%' }}
+            animate={{ y: 0 }}
+            exit={{ y: '100%' }}
+            transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+            onClick={e => e.stopPropagation()}
+            className="w-full max-h-[72%] overflow-y-auto rounded-t-[2rem] px-5 pt-5 pb-8"
+            style={{ background: '#FAF7F2', border: '1px solid rgba(42,42,42,0.08)' }}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h2 style={{ fontFamily: 'Fraunces, serif', fontSize: '1.6rem', fontWeight: 300 }}>
+                Room summary
+              </h2>
+              <button
+                onClick={onClose}
+                className="w-8 h-8 rounded-full bg-charcoal/8 flex items-center justify-center"
+                aria-label="Close room summary"
+              >
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                  <path d="M9 3L3 9M3 3l6 6" stroke="#2A2A2A" strokeWidth="1.5" strokeLinecap="round"/>
+                </svg>
+              </button>
+            </div>
+
+            {loading ? (
+              <p className="text-charcoal/45 text-sm" style={{ fontFamily: 'DM Sans' }}>
+                Creating a simple summary...
+              </p>
+            ) : summary ? (
+              <div className="space-y-4">
+                <p className="text-ink leading-relaxed" style={{ fontFamily: 'DM Sans' }}>
+                  {summary.simple_summary}
+                </p>
+                {summary.key_points.length > 0 && (
+                  <div>
+                    <h3 className="text-coral text-xs uppercase tracking-wider mb-2" style={{ fontFamily: 'DM Sans' }}>
+                      Key points
+                    </h3>
+                    <div className="space-y-2">
+                      {summary.key_points.map(point => (
+                        <p key={point} className="text-charcoal/70 text-sm" style={{ fontFamily: 'DM Sans' }}>
+                          {point}
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {summary.suggested_follow_up_questions.length > 0 && (
+                  <div>
+                    <h3 className="text-coral text-xs uppercase tracking-wider mb-2" style={{ fontFamily: 'DM Sans' }}>
+                      Questions to ask next
+                    </h3>
+                    <div className="space-y-2">
+                      {summary.suggested_follow_up_questions.map(question => (
+                        <p key={question} className="text-charcoal/70 text-sm" style={{ fontFamily: 'DM Sans' }}>
+                          {question}
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="text-charcoal/45 text-sm" style={{ fontFamily: 'DM Sans' }}>
+                No summary has been created for this room yet.
+              </p>
+            )}
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
 let utteranceCounter = 0;
 
 export function ConversationScreen({
@@ -193,6 +397,12 @@ export function ConversationScreen({
   const [interimText, setInterimText] = useState('');
   const [toast, setToast] = useState('');
   const [toastVisible, setToastVisible] = useState(false);
+  const [technicalNotes, setTechnicalNotes] = useState<TechnicalNote[]>([]);
+  const [followUpQuestions, setFollowUpQuestions] = useState<string[]>([]);
+  const [notesOpen, setNotesOpen] = useState(false);
+  const [summary, setSummary] = useState<RoomSummary | null>(null);
+  const [summaryOpen, setSummaryOpen] = useState(false);
+  const [summaryLoading, setSummaryLoading] = useState(false);
 
   const speakQueueRef = useRef<Array<{ text: string; lang: string }>>([]);
   const isSpeakingRef = useRef(false);
@@ -298,6 +508,16 @@ export function ConversationScreen({
         if (distressTimerRef.current) clearTimeout(distressTimerRef.current);
         distressTimerRef.current = setTimeout(() => setDistressVisible(false), 12000);
       }),
+
+      onMessage('technical_notes_update', (msg) => {
+        setTechnicalNotes((msg.technical_notes as TechnicalNote[]) ?? []);
+        setFollowUpQuestions((msg.follow_up_questions as string[]) ?? []);
+        showToast('Technical note added');
+      }),
+
+      onMessage('summary_update', (msg) => {
+        setSummary((msg.summary as RoomSummary) ?? null);
+      }),
     ];
 
     return () => unsubs.forEach(u => u());
@@ -348,6 +568,21 @@ export function ConversationScreen({
     }
   }, [micActive, send, showToast]);
 
+  const handleSummary = useCallback(async () => {
+    setSummaryOpen(true);
+    setSummaryLoading(true);
+    try {
+      const result = await finalizeRoomSummary(roomCode);
+      setSummary(result.summary);
+      setTechnicalNotes(result.technical_notes);
+      setFollowUpQuestions(result.follow_up_questions);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Could not create summary');
+    } finally {
+      setSummaryLoading(false);
+    }
+  }, [roomCode, showToast]);
+
   // Initial state + request current peers list (avoids timing race on mount)
   useEffect(() => {
     setOrbState('listening');
@@ -358,6 +593,7 @@ export function ConversationScreen({
 
   const peersWithoutMe = peers.filter(p => p.userId !== myUserId);
   const peerCount = peersWithoutMe.length;
+  const visibleRoomSize = Math.max(roomSize, peers.length);
 
   return (
     <div className="relative h-full flex flex-col safe-top safe-bottom no-select"
@@ -396,16 +632,38 @@ export function ConversationScreen({
             >
               {roomCode}
             </span>
+            {visibleRoomSize > 0 && (
+              <span style={{ fontFamily: 'DM Sans', fontSize: '0.65rem', color: '#2A2A2A35' }}>
+                {visibleRoomSize} connected
+              </span>
+            )}
           </div>
-          <button
-            onClick={onLeave}
-            className="w-7 h-7 rounded-full flex items-center justify-center
-                       bg-charcoal/8 active:bg-charcoal/15 transition-colors"
-          >
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <path d="M9 3L3 9M3 3l6 6" stroke="#2A2A2A" strokeWidth="1.5" strokeLinecap="round"/>
-            </svg>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setNotesOpen(true)}
+              className="px-3 h-7 rounded-full flex items-center justify-center bg-charcoal/8 active:bg-charcoal/15 transition-colors"
+              style={{ fontFamily: 'DM Sans', fontSize: '0.7rem', color: '#2A2A2A' }}
+            >
+              Notes {technicalNotes.length > 0 ? `(${technicalNotes.length})` : ''}
+            </button>
+            <button
+              onClick={handleSummary}
+              className="px-3 h-7 rounded-full flex items-center justify-center bg-coral/12 active:bg-coral/20 transition-colors"
+              style={{ fontFamily: 'DM Sans', fontSize: '0.7rem', color: '#E8744C' }}
+            >
+              Summary
+            </button>
+            <button
+              onClick={onLeave}
+              className="w-7 h-7 rounded-full flex items-center justify-center
+                         bg-charcoal/8 active:bg-charcoal/15 transition-colors"
+              aria-label="Leave room"
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                <path d="M9 3L3 9M3 3l6 6" stroke="#2A2A2A" strokeWidth="1.5" strokeLinecap="round"/>
+              </svg>
+            </button>
+          </div>
         </div>
 
         {/* Row 2: my language + peers */}
@@ -491,6 +749,18 @@ export function ConversationScreen({
 
       {/* Toast */}
       <Toast message={toast} visible={toastVisible} />
+      <NotesPanel
+        visible={notesOpen}
+        notes={technicalNotes}
+        followUpQuestions={followUpQuestions}
+        onClose={() => setNotesOpen(false)}
+      />
+      <SummaryPanel
+        visible={summaryOpen}
+        loading={summaryLoading}
+        summary={summary}
+        onClose={() => setSummaryOpen(false)}
+      />
     </div>
   );
 }

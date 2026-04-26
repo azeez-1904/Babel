@@ -1,5 +1,6 @@
 import { motion, useAnimationFrame } from 'framer-motion';
-import { useRef, useState } from 'react';
+import type { TargetAndTransition, Transition } from 'framer-motion';
+import { useRef } from 'react';
 import type { OrbState } from '../lib/types';
 
 interface Props {
@@ -149,7 +150,7 @@ function SpeakingWave({ size }: { size: number }) {
 }
 
 export function StatusOrb({ state, size = 120 }: Props) {
-  const wrapperAnimations: Record<OrbState, object> = {
+  const wrapperAnimations: Record<OrbState, TargetAndTransition> = {
     idle:       { scale: [1, 1.02, 1] },
     connecting: { scale: [1, 1.03, 1], opacity: [0.8, 1, 0.8] },
     listening:  { scale: [1, 1.04, 1] },
@@ -158,7 +159,7 @@ export function StatusOrb({ state, size = 120 }: Props) {
     error:      errorShake,
   };
 
-  const transitions: Record<OrbState, object> = {
+  const transitions: Record<OrbState, Transition> = {
     idle:       { duration: 3.5, repeat: Infinity, ease: 'easeInOut' },
     connecting: { duration: 1.4, repeat: Infinity, ease: 'easeInOut' },
     listening:  { duration: 1.2, repeat: Infinity, ease: 'easeInOut' },
