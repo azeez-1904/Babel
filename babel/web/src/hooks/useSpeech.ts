@@ -1,5 +1,41 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 
+// ── Voice cache ───────────────────────────────────────────────────────────────
+let _voiceCache: SpeechSynthesisVoice[] = [];
+
+function loadVoices(): Promise<SpeechSynthesisVoice[]> {
+  return new Promise(resolve => {
+    const v = window.speechSynthesis?.getVoices() ?? [];
+    if (v.length > 0) { _voiceCache = v; resolve(v); return; }
+    const handler = () => {
+      _voiceCache = window.speechSynthesis.getVoices();
+      resolve(_voiceCache);
+    };
+    window.speechSynthesis.addEventListener('voiceschanged', handler, { once: true });
+    // Fallback if event never fires (some browsers)
+    setTimeout(() => {
+      _voiceCache = window.speechSynthesis?.getVoices() ?? [];
+      resolve(_voiceCache);
+    }, 1500);
+  });
+}
+
+function pickVoice(lang: string, voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | undefined {
+  // 1. Exact locale match
+  let v = voices.find(v => v.lang === lang);
+  if (v) return v;
+  // 2. Same language, any region (es-MX → es-ES etc.)
+  const prefix = lang.split('-')[0].toLowerCase();
+  v = voices.find(v => v.lang.toLowerCase().startsWith(prefix));
+  if (v) return v;
+  // 3. Any voice at all (last resort)
+  return voices[0];
+}
+
+// Preload voices on module init
+if (typeof window !== 'undefined') loadVoices();
+
+// ── SpeechRecognition ─────────────────────────────────────────────────────────
 interface UseSpeechOptions {
   lang: string;
   onFinal: (text: string) => void;
@@ -22,40 +58,29 @@ export function useSpeechRecognition({ lang, onFinal, onInterim, onStateChange, 
   }, []);
 
   useEffect(() => {
-    if (!enabled) {
-      stop();
-      return;
-    }
+    if (!enabled) { stop(); return; }
 
-    const SpeechRecognition =
+    const SR =
       (window as unknown as { SpeechRecognition?: typeof window.SpeechRecognition }).SpeechRecognition ??
       (window as unknown as { webkitSpeechRecognition?: typeof window.SpeechRecognition }).webkitSpeechRecognition;
 
-    if (!SpeechRecognition) {
-      console.warn('SpeechRecognition not supported');
-      return;
-    }
+    if (!SR) { console.warn('SpeechRecognition not supported'); return; }
 
-    const recognition = new SpeechRecognition();
+    const recognition = new SR();
     recognition.lang = lang;
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.maxAlternatives = 1;
 
-    recognition.onstart = () => {
-      setIsListening(true);
-      onStateChange('listening');
-    };
+    recognition.onstart = () => { setIsListening(true); onStateChange('listening'); };
 
     recognition.onend = () => {
       setIsListening(false);
       onStateChange('idle');
-      onInterim(''); // clear interim on end
+      onInterim('');
       if (enabledRef.current) {
         restartTimerRef.current = setTimeout(() => {
-          if (enabledRef.current) {
-            try { recognition.start(); } catch { /* ignore */ }
-          }
+          if (enabledRef.current) try { recognition.start(); } catch { /* ignore */ }
         }, 150);
       }
     };
@@ -68,20 +93,17 @@ export function useSpeechRecognition({ lang, onFinal, onInterim, onStateChange, 
     };
 
     recognition.onresult = (event) => {
-      let interimTranscript = '';
+      let interim = '';
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const result = event.results[i];
         if (result.isFinal) {
           const text = result[0].transcript.trim();
-          if (text.length > 1) {
-            onInterim(''); // clear interim before sending final
-            onFinal(text);
-          }
+          if (text.length > 1) { onInterim(''); onFinal(text); }
         } else {
-          interimTranscript += result[0].transcript;
+          interim += result[0].transcript;
         }
       }
-      if (interimTranscript) onInterim(interimTranscript);
+      if (interim) onInterim(interim);
     };
 
     recognitionRef.current = recognition;
@@ -99,15 +121,45 @@ export function useSpeechRecognition({ lang, onFinal, onInterim, onStateChange, 
   return { isListening, stop };
 }
 
-export function speakText(text: string, lang: string, onStart?: () => void, onEnd?: () => void) {
-  if (!window.speechSynthesis) return;
+// ── TTS ───────────────────────────────────────────────────────────────────────
+export async function speakText(
+  text: string,
+  lang: string,
+  onStart?: () => void,
+  onEnd?: () => void,
+) {
+  if (!window.speechSynthesis) { onEnd?.(); return; }
+
   window.speechSynthesis.cancel();
+
+  const voices = _voiceCache.length > 0 ? _voiceCache : await loadVoices();
+  const voice = pickVoice(lang, voices);
+
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = lang;
-  utterance.rate = 0.95;
+  if (voice) utterance.voice = voice;
+  utterance.rate  = 0.95;
   utterance.pitch = 1;
   utterance.volume = 1;
+
   if (onStart) utterance.onstart = onStart;
-  if (onEnd) { utterance.onend = onEnd; utterance.onerror = onEnd; }
+  if (onEnd) {
+    utterance.onend  = onEnd;
+    utterance.onerror = () => onEnd();
+  }
+
+  // Chrome bug: speechSynthesis silently stops after ~15s — periodic resume hack
+  const keepAlive = setInterval(() => {
+    if (window.speechSynthesis.speaking) {
+      window.speechSynthesis.pause();
+      window.speechSynthesis.resume();
+    } else {
+      clearInterval(keepAlive);
+    }
+  }, 10000);
+
+  utterance.onend  = () => { clearInterval(keepAlive); onEnd?.(); };
+  utterance.onerror = () => { clearInterval(keepAlive); onEnd?.(); };
+
   window.speechSynthesis.speak(utterance);
 }
