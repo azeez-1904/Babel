@@ -1,6 +1,8 @@
 import { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { getRoomSummary } from '../lib/api';
 import { LANGUAGES } from '../lib/types';
+import type { RoomSummaryResponse } from '../lib/types';
 
 interface Props {
   onStart: (roomCode: string, lang: string, isNew: boolean) => void;
@@ -45,9 +47,12 @@ function GradientBackdrop() {
 }
 
 export function HeroScreen({ onStart, wsStatus }: Props) {
-  const [mode, setMode] = useState<'home' | 'start' | 'join'>('home');
+  const [mode, setMode] = useState<'home' | 'start' | 'join' | 'summary'>('home');
   const [lang, setLang] = useState('en-US');
   const [joinCode, setJoinCode] = useState('');
+  const [summaryCode, setSummaryCode] = useState('');
+  const [summaryResult, setSummaryResult] = useState<RoomSummaryResponse | null>(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
   const [error, setError] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -67,7 +72,26 @@ export function HeroScreen({ onStart, wsStatus }: Props) {
     onStart(code, lang, false);
   };
 
-  const langObj = LANGUAGES.find(l => l.code === lang) ?? LANGUAGES[0];
+  const handleSummaryLookup = async () => {
+    const code = summaryCode.trim().toUpperCase();
+    if (code.length < 2) {
+      setError('Enter a room code');
+      inputRef.current?.focus();
+      return;
+    }
+
+    setError('');
+    setSummaryLoading(true);
+    setSummaryResult(null);
+    try {
+      const result = await getRoomSummary(code);
+      setSummaryResult(result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load summary');
+    } finally {
+      setSummaryLoading(false);
+    }
+  };
 
   return (
     <div className="relative h-full flex flex-col items-center justify-center px-6 safe-top safe-bottom no-select"
@@ -207,6 +231,20 @@ export function HeroScreen({ onStart, wsStatus }: Props) {
                 }}
               >
                 Join with code
+              </button>
+
+              <button
+                onClick={() => { setMode('summary'); setError(''); }}
+                disabled={wsStatus !== 'connected'}
+                className="w-full py-3 rounded-2xl text-charcoal/70 font-medium text-sm transition-all active:scale-[0.97]"
+                style={{
+                  background: 'rgba(255,255,255,0.42)',
+                  border: '1px solid rgba(42,42,42,0.08)',
+                  fontFamily: 'DM Sans, sans-serif',
+                  backdropFilter: 'blur(8px)',
+                }}
+              >
+                View summary by room code
               </button>
             </motion.div>
 
@@ -386,6 +424,124 @@ export function HeroScreen({ onStart, wsStatus }: Props) {
             >
               Join →
             </button>
+          </motion.div>
+        )}
+
+        {mode === 'summary' && (
+          <motion.div
+            key="summary"
+            className="relative z-10 flex flex-col items-center w-full max-w-sm"
+            initial={{ opacity: 0, y: 24 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -16 }}
+            transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <button
+              onClick={() => { setMode('home'); setError(''); setSummaryResult(null); }}
+              className="self-start mb-8 flex items-center gap-1.5 text-charcoal/50 active:opacity-60"
+              style={{ fontFamily: 'DM Sans', fontSize: '0.875rem' }}
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <path d="M10 12L6 8l4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+              Back
+            </button>
+
+            <h2 style={{ fontFamily: 'Fraunces, serif', fontSize: '2rem', fontWeight: 300 }}
+                className="mb-2 text-center text-ink">
+              Room summary
+            </h2>
+            <p className="text-charcoal/50 text-sm mb-6 text-center" style={{ fontFamily: 'DM Sans' }}>
+              Enter a room code to view the saved simple-language summary.
+            </p>
+
+            <div className="w-full mb-4">
+              <input
+                ref={inputRef}
+                type="text"
+                value={summaryCode}
+                onChange={e => setSummaryCode(e.target.value.toUpperCase().slice(0, 6))}
+                onKeyDown={e => e.key === 'Enter' && handleSummaryLookup()}
+                placeholder="ABCD"
+                maxLength={6}
+                className="w-full rounded-2xl border border-fog text-charcoal text-center
+                           py-4 px-4 text-2xl tracking-[0.3em] font-medium outline-none
+                           transition-all focus:border-coral/60 focus:ring-2 focus:ring-coral/15"
+                style={{
+                  background: 'rgba(255,255,255,0.7)',
+                  fontFamily: 'DM Sans, monospace',
+                  backdropFilter: 'blur(8px)',
+                }}
+                autoCapitalize="characters"
+                autoCorrect="off"
+                spellCheck={false}
+              />
+              {error && (
+                <p className="text-red-400 text-sm text-center mt-2" style={{ fontFamily: 'DM Sans' }}>{error}</p>
+              )}
+            </div>
+
+            <button
+              onClick={handleSummaryLookup}
+              disabled={summaryLoading}
+              className="w-full py-4 rounded-2xl text-white font-medium text-base transition-all active:scale-[0.97] disabled:opacity-60"
+              style={{
+                background: 'linear-gradient(135deg, #E8744C 0%, #D4973A 100%)',
+                fontFamily: 'DM Sans',
+                boxShadow: '0 4px 24px rgba(232,116,76,0.4)',
+              }}
+            >
+              {summaryLoading ? 'Loading summary...' : 'Load summary'}
+            </button>
+
+            {summaryResult && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="w-full mt-5 max-h-[42vh] overflow-y-auto rounded-2xl p-4 text-left"
+                style={{ background: 'rgba(255,255,255,0.68)', border: '1px solid rgba(42,42,42,0.08)' }}
+              >
+                {summaryResult.summary ? (
+                  <div className="space-y-3">
+                    <p className="text-ink leading-relaxed" style={{ fontFamily: 'DM Sans', fontSize: '0.95rem' }}>
+                      {summaryResult.summary.simple_summary}
+                    </p>
+                    {summaryResult.summary.key_points.length > 0 && (
+                      <div>
+                        <h3 className="text-coral text-xs uppercase tracking-wider mb-2" style={{ fontFamily: 'DM Sans' }}>
+                          Key points
+                        </h3>
+                        <div className="space-y-1.5">
+                          {summaryResult.summary.key_points.map(point => (
+                            <p key={point} className="text-charcoal/65 text-sm" style={{ fontFamily: 'DM Sans' }}>
+                              {point}
+                            </p>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {summaryResult.summary.suggested_follow_up_questions.length > 0 && (
+                      <div>
+                        <h3 className="text-coral text-xs uppercase tracking-wider mb-2" style={{ fontFamily: 'DM Sans' }}>
+                          Questions to ask next
+                        </h3>
+                        <div className="space-y-1.5">
+                          {summaryResult.summary.suggested_follow_up_questions.map(question => (
+                            <p key={question} className="text-charcoal/65 text-sm" style={{ fontFamily: 'DM Sans' }}>
+                              {question}
+                            </p>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-charcoal/50 text-sm" style={{ fontFamily: 'DM Sans' }}>
+                    This room exists, but it does not have a summary yet.
+                  </p>
+                )}
+              </motion.div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
