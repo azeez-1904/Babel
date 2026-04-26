@@ -649,6 +649,34 @@ async function handleSoloEnd(client: BabelClient) {
   console.log(`[solo] ${client.userId} ended session (${session.exchanges.length} exchanges)`);
 }
 
+const PROMPT_CATEGORIES = [
+  'greetings and farewells',
+  'ordering food or drinks',
+  'asking for directions',
+  'shopping and prices',
+  'weather and seasons',
+  'family and relationships',
+  'hobbies and free time',
+  'travel and transportation',
+  'feelings and emotions',
+  'time and schedules',
+  'workplace and jobs',
+  'health and body',
+  'compliments and politeness',
+  'making plans with friends',
+  'describing your surroundings',
+  'expressing preferences',
+  'apologizing or excusing yourself',
+  'talking about food and cooking',
+  'emergency and help phrases',
+  'numbers, counting, and math',
+  'animals and nature',
+  'sports and exercise',
+  'music and entertainment',
+  'colors, shapes, and sizes',
+  'asking for opinions',
+];
+
 async function handleSoloRequestPrompt(client: BabelClient) {
   const session = soloSessions.get(client.userId);
   if (!session) {
@@ -661,30 +689,30 @@ async function handleSoloRequestPrompt(client: BabelClient) {
   const exchangeCount = session.exchanges.length;
   const difficultyHint = exchangeCount < 5 ? 'beginner' : exchangeCount < 12 ? 'intermediate' : 'advanced';
 
-  const recentPhrases = session.recentPrompts.slice(-10);
+  const recentPhrases = session.recentPrompts.slice(-15);
+  const category = PROMPT_CATEGORIES[Math.floor(Math.random() * PROMPT_CATEGORIES.length)];
+  const wordCount = Math.floor(Math.random() * 4) + 3; // 3-6 words
 
   try {
     const msg = await anthropic.messages.create({
       model: 'claude-sonnet-4-5',
       max_tokens: 400,
+      temperature: 1,
       system: `You are a language tutor. Generate a single practice phrase in ${targetName} for a ${nativeName} speaker to try saying aloud.
 
-Difficulty: ${difficultyHint}.
-${recentPhrases.length > 0 ? `You MUST NOT repeat or rephrase any of these previously given phrases: ${JSON.stringify(recentPhrases)}. Generate something completely different.` : ''}
-${session.allVocab.length > 0 ? `The user has already learned: ${JSON.stringify(session.allVocab.map(v => v.word).slice(-20))}. Try to include some of these words so they can practice them.` : ''}
+Difficulty: ${difficultyHint}. Category: ${category}. Aim for roughly ${wordCount} words.
+${recentPhrases.length > 0 ? `You MUST NOT repeat or closely rephrase any of these previously given phrases:\n${recentPhrases.map((p, i) => `${i + 1}. "${p}"`).join('\n')}\nGenerate something COMPLETELY different — different vocabulary, different structure, different topic.` : ''}
+${session.allVocab.length > 0 ? `The user has learned these words: ${JSON.stringify(session.allVocab.map(v => v.word).slice(-20))}. Optionally weave one in.` : ''}
 
-IMPORTANT RULES:
-- Do NOT include any proper names or personal names in the phrase.
-- Keep phrases generic and universally useful.
-- The phrase must be short enough to repeat easily (max ~8 words).
-
-For beginner: simple greetings, polite phrases, numbers, common questions, basic responses.
-For intermediate: ordering food, asking for directions, describing things, making plans.
-For advanced: expressing opinions, idioms, complex situations.
+RULES:
+- No proper names or personal names.
+- Keep it generic and universally useful.
+- Max ~8 words.
+- Be creative and surprising — avoid the most obvious/common phrase for this category.
 
 Return ONLY valid JSON:
 {"phrase":"<phrase in ${targetName}>","phonetic":"<pronunciation guide for ${nativeName} speaker>","translation":"<translation in ${nativeName}>","context":"<one-line situational hint, e.g. 'greeting someone' or 'ordering at a café'>"}`,
-      messages: [{ role: 'user', content: 'Generate the next practice phrase.' }],
+      messages: [{ role: 'user', content: `Give me a random ${difficultyHint}-level phrase about "${category}" in ${targetName}. Surprise me — pick something unusual, not the first thing that comes to mind.` }],
     });
 
     const content = msg.content[0];
