@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { StatusOrb, MiniOrb } from './StatusOrb';
 import { TranscriptView } from './TranscriptView';
 import { useSpeechRecognition, speakText } from '../hooks/useSpeech';
+import { useNoiseSuppression } from '../hooks/useNoiseSuppression';
 import type { OrbState, Utterance } from '../lib/types';
 import { LANGUAGES } from '../lib/types';
 
@@ -137,6 +138,82 @@ function MicButton({ active, onToggle, disabled }: { active: boolean; onToggle: 
   );
 }
 
+// ─── Noise suppression button + level meter ──────────────────────────────────
+function NoiseButton({ active, onToggle, level }: { active: boolean; onToggle: () => void; level: number }) {
+  const bars = 5;
+  return (
+    <div className="flex flex-col items-center gap-1.5">
+      <motion.button
+        onClick={onToggle}
+        whileTap={{ scale: 0.92 }}
+        className="relative flex items-center justify-center rounded-full transition-all"
+        style={{
+          width: 48, height: 48,
+          background: active
+            ? 'linear-gradient(135deg, rgba(212,151,58,0.2), rgba(232,116,76,0.15))'
+            : 'rgba(255,255,255,0.8)',
+          border: active ? '1.5px solid rgba(212,151,58,0.4)' : '1.5px solid rgba(42,42,42,0.12)',
+          backdropFilter: 'blur(8px)',
+        }}
+        aria-label={active ? 'Disable noise suppression' : 'Enable noise suppression'}
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          {/* Waveform / noise icon */}
+          <path d="M2 12h2M20 12h2M6 8v8M18 8v8M10 5v14M14 5v14"
+            stroke={active ? '#D4973A' : '#2A2A2A80'}
+            strokeWidth="1.8" strokeLinecap="round" />
+          {active && (
+            <motion.line x1="0" y1="12" x2="24" y2="12"
+              stroke="rgba(232,116,76,0.3)" strokeWidth="1"
+              strokeDasharray="3 3"
+              animate={{ x1: [-4, 4], x2: [20, 28] }}
+              transition={{ duration: 1.2, repeat: Infinity, ease: 'linear' }}
+            />
+          )}
+        </svg>
+      </motion.button>
+
+      {/* Live audio level bars — only shown when active */}
+      <AnimatePresence>
+        {active && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="flex items-end gap-0.5"
+            style={{ height: 14 }}
+          >
+            {Array.from({ length: bars }).map((_, i) => {
+              const threshold = (i + 1) / bars;
+              const lit = level >= threshold - 0.15;
+              return (
+                <motion.div
+                  key={i}
+                  className="rounded-sm"
+                  style={{
+                    width: 3,
+                    height: 4 + i * 2,
+                    background: lit
+                      ? i < 3 ? '#D4973A' : '#E8744C'
+                      : 'rgba(42,42,42,0.12)',
+                    transition: 'background 0.1s',
+                  }}
+                />
+              );
+            })}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {active && (
+        <span style={{ fontFamily: 'DM Sans', fontSize: '0.55rem', color: '#D4973A', letterSpacing: '0.05em' }}>
+          NS ON
+        </span>
+      )}
+    </div>
+  );
+}
+
 // ─── Audio toggle button ─────────────────────────────────────────────────────
 function AudioButton({ active, onToggle }: { active: boolean; onToggle: () => void }) {
   return (
@@ -224,18 +301,24 @@ export function ConversationScreen({
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [micActive, setMicActive] = useState(true);
   const [audioActive, setAudioActive] = useState(true);
+  const [noiseSuppress, setNoiseSuppress] = useState(false);
+  const [currentLang, setCurrentLang] = useState(myLang);
+  const [langPickerOpen, setLangPickerOpen] = useState(false);
   const [interimText, setInterimText] = useState('');
   const [toast, setToast] = useState('');
   const [toastVisible, setToastVisible] = useState(false);
 
   const audioActiveRef = useRef(true);
+  const currentLangRef = useRef(myLang);
+  currentLangRef.current = currentLang;
+  const { noiseLevel, isActive: nsActive } = useNoiseSuppression(noiseSuppress);
 
   const speakQueueRef = useRef<Array<{ text: string; lang: string }>>([]);
   const isSpeakingRef = useRef(false);
   const distressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const myLangObj = LANGUAGES.find(l => l.code === myLang);
+  const myLangObj = LANGUAGES.find(l => l.code === currentLang);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -289,6 +372,23 @@ export function ConversationScreen({
     }
     showToast(next ? 'Audio on' : 'Audio off');
   }, [showToast]);
+
+  const toggleNoise = useCallback(() => {
+    setNoiseSuppress(prev => {
+      const next = !prev;
+      showToast(next ? 'Noise suppression on' : 'Noise suppression off');
+      return next;
+    });
+  }, [showToast]);
+
+  const changeLang = useCallback((code: string) => {
+    setCurrentLang(code);
+    setLangPickerOpen(false);
+    setInterimText('');
+    send({ type: 'update_lang', lang: code });
+    const label = LANGUAGES.find(l => l.code === code)?.label ?? code;
+    showToast(`Now speaking ${label}`);
+  }, [send, showToast]);
 
   // ── WebSocket messages ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -382,7 +482,7 @@ export function ConversationScreen({
   }, [send]);
 
   useSpeechRecognition({
-    lang: myLang,
+    lang: currentLang,
     onFinal: handleFinal,
     onInterim: handleInterim,
     onStateChange: handleSpeechState,
@@ -464,19 +564,24 @@ export function ConversationScreen({
           </button>
         </div>
 
-        {/* Row 2: my language + peers */}
+        {/* Row 2: my language (tappable) + peers */}
         <div className="flex items-center gap-2 flex-wrap">
-          {/* Me */}
-          <div className="flex items-center gap-1 px-2 py-1 rounded-full"
-               style={{
-                 background: 'linear-gradient(135deg, rgba(232,116,76,0.15), rgba(212,151,58,0.1))',
-                 border: '1px solid rgba(232,116,76,0.2)',
-                 fontFamily: 'DM Sans', fontSize: '0.7rem',
-               }}>
+          {/* Me — tap to change language */}
+          <button
+            onClick={() => setLangPickerOpen(true)}
+            className="flex items-center gap-1 px-2 py-1 rounded-full active:opacity-70 transition-opacity"
+            style={{
+              background: 'linear-gradient(135deg, rgba(232,116,76,0.15), rgba(212,151,58,0.1))',
+              border: '1px solid rgba(232,116,76,0.2)',
+              fontFamily: 'DM Sans', fontSize: '0.7rem',
+            }}>
             <span>{myLangObj?.flag}</span>
-            <span className="text-coral font-medium">{myLangObj?.label ?? myLang}</span>
-            <span className="text-charcoal/30 text-xs ml-0.5">(you)</span>
-          </div>
+            <span className="text-coral font-medium">{myLangObj?.label ?? currentLang}</span>
+            <span className="text-charcoal/30 ml-0.5">(you)</span>
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" className="ml-0.5 text-coral/50">
+              <path d="M2 3.5l3 3 3-3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </button>
 
           {peerCount > 0 ? (
             <>
@@ -526,9 +631,10 @@ export function ConversationScreen({
       <div className="relative z-10 flex flex-col items-center gap-5 pb-10">
         <StatusOrb state={micActive ? orbState : 'idle'} size={120} />
 
-        <div className="flex items-center gap-4">
+        <div className="flex items-end gap-4">
           <AudioButton active={audioActive} onToggle={toggleAudio} />
           <MicButton active={micActive} onToggle={toggleMic} />
+          <NoiseButton active={nsActive} onToggle={toggleNoise} level={noiseLevel} />
         </div>
 
         <motion.p
@@ -547,6 +653,66 @@ export function ConversationScreen({
 
       {/* Toast */}
       <Toast message={toast} visible={toastVisible} />
+
+      {/* Language picker sheet */}
+      <AnimatePresence>
+        {langPickerOpen && (
+          <>
+            {/* Backdrop */}
+            <motion.div
+              className="absolute inset-0 z-40"
+              style={{ background: 'rgba(26,22,18,0.35)', backdropFilter: 'blur(2px)' }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setLangPickerOpen(false)}
+            />
+            {/* Sheet */}
+            <motion.div
+              className="absolute bottom-0 left-0 right-0 z-50 rounded-t-3xl overflow-hidden"
+              style={{ background: '#FAF7F2', maxHeight: '72vh' }}
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              transition={{ type: 'spring', damping: 30, stiffness: 320 }}
+            >
+              {/* Handle */}
+              <div className="flex justify-center pt-3 pb-1">
+                <div className="w-10 h-1 rounded-full bg-charcoal/15" />
+              </div>
+
+              <p className="text-center pb-3 pt-1"
+                 style={{ fontFamily: 'DM Sans', fontSize: '0.75rem', color: '#2A2A2A50', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                I now speak
+              </p>
+
+              <div className="overflow-y-auto pb-8" style={{ maxHeight: '56vh' }}>
+                {LANGUAGES.map(l => {
+                  const active = l.code === currentLang;
+                  return (
+                    <button
+                      key={l.code}
+                      onClick={() => changeLang(l.code)}
+                      className="w-full flex items-center gap-3 px-6 py-3.5 active:bg-charcoal/5 transition-colors"
+                      style={{ fontFamily: 'DM Sans' }}
+                    >
+                      <span style={{ fontSize: '1.4rem' }}>{l.flag}</span>
+                      <span style={{ fontSize: '0.95rem', color: active ? '#E8744C' : '#2A2A2A', fontWeight: active ? 500 : 400 }}>
+                        {l.label}
+                      </span>
+                      {active && (
+                        <svg className="ml-auto" width="16" height="16" viewBox="0 0 16 16" fill="none">
+                          <path d="M3 8l4 4 6-7" stroke="#E8744C" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

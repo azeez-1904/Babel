@@ -23,7 +23,8 @@ interface UtteranceMsg   { type: 'utterance';     original_text: string }
 interface StateChangeMsg { type: 'state_change';  state: State }
 interface DevicePingMsg  { type: 'device_ping';   device_id: string }
 interface RequestPeersMsg{ type: 'request_peers' }
-type IncomingMsg = JoinRoomMsg | UtteranceMsg | StateChangeMsg | DevicePingMsg | RequestPeersMsg;
+interface UpdateLangMsg  { type: 'update_lang';   lang: string }
+type IncomingMsg = JoinRoomMsg | UtteranceMsg | StateChangeMsg | DevicePingMsg | RequestPeersMsg | UpdateLangMsg;
 
 interface TranslationResult {
   source_lang: string;
@@ -247,6 +248,13 @@ function handleDevicePing(client: BabelClient, msg: DevicePingMsg) {
   send(client, { type: 'pong', device_id: msg.device_id, ts: Date.now() });
 }
 
+function handleUpdateLang(client: BabelClient, msg: UpdateLangMsg) {
+  if (!client.room) return;
+  client.lang = msg.lang;
+  broadcastPeers(client.room);
+  console.log(`[room ${client.room}] ${client.userId} switched lang → ${msg.lang}`);
+}
+
 function handleRequestPeers(client: BabelClient) {
   if (!client.room) return;
   const room = rooms.get(client.room);
@@ -313,6 +321,7 @@ wss.on('connection', (ws) => {
         case 'state_change':  handleStateChange(client, msg); break;
         case 'device_ping':   handleDevicePing(client, msg); break;
         case 'request_peers': handleRequestPeers(client); break;
+        case 'update_lang':   handleUpdateLang(client, msg); break;
       }
     } catch (err) {
       console.error(`Handler error (${msg.type}):`, err);
