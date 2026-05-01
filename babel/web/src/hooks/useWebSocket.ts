@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { BabelWS } from '../lib/websocket';
 
-const SERVER_URL = import.meta.env.VITE_SERVER_URL ?? 'ws://localhost:8080';
+const SERVER_URL = import.meta.env.VITE_SERVER_URL ?? 'ws://172.20.10.3:8080';
 
 export type WsStatus = 'connecting' | 'connected' | 'disconnected';
 

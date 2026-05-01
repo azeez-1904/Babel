@@ -1,0 +1,49 @@
+# Environment / secrets
+.env
+*.env
+
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+.vite/
+
+# Vite cache
+babel/web/node_modules/.vite/
+
+# PlatformIO / ESP-IDF
+.pio/
+babel_esp/build/
+babel_esp/managed_components/
+babel_esp/sdkconfig.old
+babel_esp/*.wav
+babel_esp/main/config.h
+
+# Firmware secrets
+firmware/src/config.h
+
+# Logs / run artifacts
+.runlogs/
+*.log
+
+# Claude / Codex artifacts
+.claude/
+CODEX_CONTINUE_CONTEXT.md
+
+# Data / archives
+data/
+server/data/
+babel/server/data/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+*.swp
+*.swo
+*~

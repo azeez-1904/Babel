@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { HeroScreen } from './components/HeroScreen';
 import { ConversationScreen } from './components/ConversationScreen';
+import { LessonScreen } from './components/LessonScreen';
+import { SoloPracticeScreen } from './components/SoloPracticeScreen';
 import { TextConversationScreen } from './components/TextConversationScreen';
 import { useWebSocket } from './hooks/useWebSocket';
 import type { Screen } from './lib/types';
@@ -13,6 +15,7 @@ export default function App() {
   const [roomCode, setRoomCode] = useState('');
   const [myLang, setMyLang] = useState('en-US');
   const [myUserId, setMyUserId] = useState('');
+  const [lessonTarget, setLessonTarget] = useState('');
   const [inputMode, setInputMode] = useState<InputMode>('voice');
 
   const { send, status, roomSize, on } = useWebSocket();
@@ -37,6 +40,17 @@ export default function App() {
     setRoomCode('');
   }, []);
 
+  const handleLesson = useCallback((code: string, userLang: string, targetLang: string) => {
+    setRoomCode(code);
+    setMyLang(userLang);
+    setLessonTarget(targetLang);
+    setScreen('lesson');
+  }, []);
+
+  const handleSolo = useCallback(() => {
+    setScreen('solo');
+  }, []);
+
   // Only request mic for voice mode
   useEffect(() => {
     if (screen === 'hero' || inputMode === 'text') return;
@@ -48,7 +62,7 @@ export default function App() {
   return (
     <div className="h-full overflow-hidden" style={{ background: '#FAF7F2' }}>
       <AnimatePresence mode="wait">
-        {screen === 'hero' ? (
+        {screen === 'hero' && (
           <motion.div
             key="hero"
             className="absolute inset-0"
@@ -57,40 +71,86 @@ export default function App() {
             exit={{ opacity: 0, scale: 0.97 }}
             transition={{ duration: 0.35 }}
           >
-            <HeroScreen onStart={handleStart} wsStatus={status} />
-          </motion.div>
-        ) : inputMode === 'text' ? (
-          <motion.div
-            key="text-conversation"
-            className="absolute inset-0"
-            initial={{ opacity: 0, y: 40 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-          >
-            <TextConversationScreen
-              roomCode={roomCode}
-              myLang={myLang}
-              myUserId={myUserId}
-              onLeave={handleLeave}
-              send={send}
-              onMessage={on}
+            <HeroScreen
+              onStart={handleStart}
+              onLesson={handleLesson}
+              onSolo={handleSolo}
+              wsStatus={status}
             />
           </motion.div>
-        ) : (
+        )}
+
+        {screen === 'conversation' && (
+          inputMode === 'text' ? (
+            <motion.div
+              key="text-conversation"
+              className="absolute inset-0"
+              initial={{ opacity: 0, y: 40 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+            >
+              <TextConversationScreen
+                roomCode={roomCode}
+                myLang={myLang}
+                myUserId={myUserId}
+                onLeave={handleLeave}
+                send={send}
+                onMessage={on}
+              />
+            </motion.div>
+          ) : (
+            <motion.div
+              key="conversation"
+              className="absolute inset-0"
+              initial={{ opacity: 0, scale: 1.03 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+            >
+              <ConversationScreen
+                roomCode={roomCode}
+                myLang={myLang}
+                myUserId={myUserId}
+                roomSize={roomSize}
+                onLeave={handleLeave}
+                onLesson={handleLesson}
+                send={send}
+                onMessage={on}
+              />
+            </motion.div>
+          )
+        )}
+
+        {screen === 'lesson' && (
           <motion.div
-            key="conversation"
+            key="lesson"
+            className="absolute inset-0"
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -20 }}
+            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <LessonScreen
+              roomCode={roomCode}
+              userLang={myLang}
+              targetLang={lessonTarget}
+              onBack={handleLeave}
+            />
+          </motion.div>
+        )}
+
+        {screen === 'solo' && (
+          <motion.div
+            key="solo"
             className="absolute inset-0"
             initial={{ opacity: 0, scale: 1.03 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
           >
-            <ConversationScreen
-              roomCode={roomCode}
-              myLang={myLang}
+            <SoloPracticeScreen
               myUserId={myUserId}
-              roomSize={roomSize}
               onLeave={handleLeave}
               send={send}
               onMessage={on}

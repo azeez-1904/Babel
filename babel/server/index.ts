@@ -6,15 +6,20 @@ import twilio from 'twilio';
 import {
   appendTranscript,
   getArchive,
+  getLessonFromArchive,
   mergeTechnicalNotes,
   normalizeRoomCode,
+  saveLesson,
   saveSummary,
+  type LessonCache,
+  type LessonPhrase,
   type RoomArchive,
   type RoomSummary,
   type TechnicalNote,
   type TranscriptTranslation,
 } from './roomArchive';
 
+const HOST = process.env.HOST ?? '0.0.0.0';
 const PORT = parseInt(process.env.PORT ?? '8080');
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const twilioClient = (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN)
@@ -46,7 +51,11 @@ interface StateChangeMsg { type: 'state_change';  state: State }
 interface DevicePingMsg  { type: 'device_ping';   device_id: string }
 interface RequestPeersMsg{ type: 'request_peers' }
 interface UpdateLangMsg  { type: 'update_lang';   lang: string }
-type IncomingMsg = JoinRoomMsg | UtteranceMsg | StateChangeMsg | DevicePingMsg | RequestPeersMsg | UpdateLangMsg;
+interface JoinSoloMsg    { type: 'join_solo';     native_lang: string; target_lang: string }
+interface SoloUtteranceMsg { type: 'solo_utterance'; original_text: string; attempted_target?: boolean }
+interface SoloEndMsg     { type: 'solo_end' }
+interface SoloRequestPromptMsg { type: 'solo_request_prompt' }
+type IncomingMsg = JoinRoomMsg | UtteranceMsg | StateChangeMsg | DevicePingMsg | RequestPeersMsg | UpdateLangMsg | JoinSoloMsg | SoloUtteranceMsg | SoloEndMsg | SoloRequestPromptMsg;
 
 interface TranslationResult {
   source_lang: string;
@@ -67,10 +76,57 @@ interface SummaryResult {
   suggested_follow_up_questions: string[];
 }
 
+// ─── Solo session types ──────────────────────────────────────────────────────
+
+interface SoloExchange {
+  userText: string;
+  attemptedTarget: boolean;
+  response: SoloTutorResult;
+}
+
+interface SoloSession {
+  userId: string;
+  nativeLang: string;
+  targetLang: string;
+  exchanges: SoloExchange[];
+  allVocab: SoloVocabCard[];
+  difficulty: 'beginner' | 'intermediate' | 'advanced';
+  recentPrompts: string[];
+}
+
+interface SoloVocabCard {
+  word: string;
+  phonetic: string;
+  translation: string;
+  example_sentence: string;
+  example_translation: string;
+}
+
+interface SoloTutorResult {
+  translation: string;
+  phonetic: string;
+  correction?: string;
+  correction_note?: string;
+  encouragement: string;
+  vocab_cards: SoloVocabCard[];
+  suggested_reply: string;
+  suggested_reply_translation: string;
+  suggested_reply_phonetic: string;
+  difficulty_level: 'beginner' | 'intermediate' | 'advanced';
+}
+
+interface SoloSummaryResult {
+  total_exchanges: number;
+  words_learned: SoloVocabCard[];
+  phrases_practiced: string[];
+  tips: string[];
+}
+
 // ─── State ────────────────────────────────────────────────────────────────────
 
 const clients = new Map<string, BabelClient>();
 const rooms = new Map<string, Set<string>>();
+const soloSessions = new Map<string, SoloSession>();
 const smsClients = new Map<string, SmsClient>(); // phone → SmsClient
 const smsUserIds = new Map<string, string>();    // userId → phone
 
@@ -168,7 +224,7 @@ function parseClaudeJson<T>(text: string) {
 async function translate(text: string, targetLang: string): Promise<TranslationResult> {
   const targetLangName = langName(targetLang);
   const msg = await anthropic.messages.create({
-    model: 'claude-sonnet-4-5',
+    model: 'claude-sonnet-4-6',
     max_tokens: 512,
     system: `You are a professional real-time spoken-word interpreter. Your ONLY job is to translate speech into a completely different language, safely and accurately.
 
@@ -326,6 +382,85 @@ async function getSummaryForLanguage(archive: RoomArchive, targetLang: string) {
   return archive.summaries?.[targetLang] ?? null;
 }
 
+// ─── Lesson generation ────────────────────────────────────────────────────────
+
+interface LessonResult {
+  phrases: Omit<LessonPhrase, 'id'>[];
+}
+
+async function generateLesson(archive: RoomArchive, userLang: string, targetLang: string): Promise<LessonCache> {
+  const userLangName = langName(userLang);
+  const targetLangName = langName(targetLang);
+
+  const transcript = archive.transcript
+    .slice(-40)
+    .map(e => `${e.from_user} (${e.source_lang}): ${e.original_text}`)
+    .join('\n');
+
+  const msg = await anthropic.messages.create({
+    model: 'claude-sonnet-4-5',
+    max_tokens: 1500,
+    system: `You are a language learning assistant. Extract 5-10 key phrases from a conversation transcript that would be most useful for a ${userLangName} speaker to learn in ${targetLangName}.
+
+Rules:
+- Focus on phrases spoken in ${targetLangName} (or the target language) from the transcript.
+- If the conversation was between two different languages, pick phrases from the language the user wants to learn (${targetLangName}).
+- For each phrase provide: the original phrase, a romanized phonetic pronunciation guide readable by a ${userLangName} speaker, a natural translation in ${userLangName}, a category, a one-line context note, and a difficulty level.
+- Categories: greeting, question, technical, common_response, expression
+- Difficulty: beginner (everyday), intermediate (situational), advanced (nuanced/idiomatic)
+- Phonetic guide should use the script familiar to ${userLangName} speakers (Latin alphabet for English speakers, etc.)
+- Keep translations natural, not literal word-for-word.
+- If there are not enough phrases in the target language, extract useful phrases and provide their ${targetLangName} equivalents.
+- Return ONLY valid JSON — no markdown fences, no explanation.
+
+Response schema:
+{"phrases":[{"original":"<phrase in target language>","phonetic":"<pronunciation guide>","translation":"<meaning in user language>","category":"<greeting|question|technical|common_response|expression>","context":"<when/how it was used>","difficulty":"<beginner|intermediate|advanced>"}]}`,
+    messages: [{
+      role: 'user',
+      content: `Generate a lesson for a ${userLangName} speaker learning ${targetLangName} from this conversation:\n\n${transcript}`,
+    }],
+  });
+
+  const content = msg.content[0];
+  if (content.type !== 'text') throw new Error('Unexpected Claude response type');
+  const result = parseClaudeJson<LessonResult>(content.text);
+
+  const now = Date.now();
+  const phrases: LessonPhrase[] = (result.phrases ?? [])
+    .filter(p => p.original && p.translation)
+    .slice(0, 10)
+    .map((p, i) => ({
+      id: `${now}-${i}`,
+      original: String(p.original),
+      phonetic: String(p.phonetic || ''),
+      translation: String(p.translation),
+      category: (['greeting', 'question', 'technical', 'common_response', 'expression'].includes(p.category) ? p.category : 'expression') as LessonPhrase['category'],
+      context: String(p.context || ''),
+      difficulty: (['beginner', 'intermediate', 'advanced'].includes(p.difficulty) ? p.difficulty : 'beginner') as LessonPhrase['difficulty'],
+    }));
+
+  const lesson: LessonCache = {
+    room_code: archive.room_code,
+    source_lang: userLang,
+    target_lang: targetLang,
+    phrases,
+    created_at: now,
+  };
+
+  await saveLesson(archive.room_code, lesson);
+  return lesson;
+}
+
+async function handleLessonRequest(roomCode: string, userLang: string, targetLang: string) {
+  const archive = await getArchive(roomCode);
+  if (!archive || archive.transcript.length === 0) return null;
+
+  const cached = getLessonFromArchive(archive, userLang, targetLang);
+  if (cached) return cached;
+
+  return generateLesson(archive, userLang, targetLang);
+}
+
 async function generateAndSaveSummary(archive: RoomArchive, targetLang: string) {
   const summary = await generateRoomSummary(archive, targetLang);
   return saveSummary(archive.room_code, targetLang, summary);
@@ -374,6 +509,220 @@ async function analyzeAndBroadcast(roomCode: string, text: string) {
     }
   } catch (err) {
     console.error(`[room ${roomCode}] technical analysis error:`, err);
+  }
+}
+
+// ─── Solo Practice ────────────────────────────────────────────────────────────
+
+async function soloTutor(session: SoloSession, text: string, attemptedTarget: boolean): Promise<SoloTutorResult> {
+  const nativeName = langName(session.nativeLang);
+  const targetName = langName(session.targetLang);
+
+  const historyLines = session.exchanges.slice(-10).map((ex, i) =>
+    `Turn ${i + 1}:\nUser: "${ex.userText}"${ex.attemptedTarget ? ' (attempted target language)' : ''}\nTutor translation: "${ex.response.translation}"\nTutor phonetic: "${ex.response.phonetic}"${ex.response.correction ? `\nCorrection: "${ex.response.correction}" — ${ex.response.correction_note}` : ''}`
+  ).join('\n\n');
+
+  const exchangeCount = session.exchanges.length;
+  const difficultyHint = exchangeCount < 5 ? 'beginner' : exchangeCount < 12 ? 'intermediate' : 'advanced';
+
+  const msg = await anthropic.messages.create({
+    model: 'claude-sonnet-4-5',
+    max_tokens: 1000,
+    system: `You are a friendly, encouraging language tutor helping a ${nativeName} speaker learn ${targetName}.
+
+Current difficulty target: ${difficultyHint}. Exchanges so far: ${exchangeCount}.
+
+Rules:
+- Translate the user's text into ${targetName}.
+- Provide a romanized phonetic pronunciation guide readable by a ${nativeName} speaker.
+- If the user attempted to speak in ${targetName} (attempted_target=true), check for errors and provide a corrected version with a brief, kind explanation. If they got it right, congratulate them.
+- Give a short encouraging comment (1 sentence).
+- Provide 2-3 vocabulary cards with words from this exchange that are useful to learn. Each card has: word (in ${targetName}), phonetic, translation (in ${nativeName}), example_sentence (in ${targetName}), example_translation (in ${nativeName}).
+- Suggest a reply the user could try saying next in ${targetName}, with translation and phonetic guide.
+- Difficulty level: ${difficultyHint}. For beginner, use simple everyday phrases. For intermediate, use situational and slightly complex structures. For advanced, introduce idioms and nuanced expressions.
+- Do not include vocabulary the user has already learned: ${JSON.stringify(session.allVocab.map(v => v.word).slice(-30))}
+- Return ONLY valid JSON — no markdown fences, no explanation.
+
+Response schema:
+{"translation":"<text in ${targetName}>","phonetic":"<pronunciation guide>","correction":"<corrected version if attempted_target, else omit>","correction_note":"<brief explanation if corrected, else omit>","encouragement":"<short positive comment>","vocab_cards":[{"word":"<${targetName}>","phonetic":"<guide>","translation":"<${nativeName}>","example_sentence":"<${targetName}>","example_translation":"<${nativeName}>"}],"suggested_reply":"<phrase in ${targetName}>","suggested_reply_translation":"<in ${nativeName}>","suggested_reply_phonetic":"<guide>","difficulty_level":"${difficultyHint}"}`,
+    messages: [{
+      role: 'user',
+      content: `${historyLines ? `Conversation history:\n${historyLines}\n\n` : ''}User says: "${text}"${attemptedTarget ? '\n(The user attempted to speak in the target language)' : ''}`,
+    }],
+  });
+
+  const content = msg.content[0];
+  if (content.type !== 'text') throw new Error('Unexpected Claude response type');
+  return parseClaudeJson<SoloTutorResult>(content.text);
+}
+
+async function generateSoloSummary(session: SoloSession): Promise<SoloSummaryResult> {
+  const nativeName = langName(session.nativeLang);
+  const targetName = langName(session.targetLang);
+
+  const exchangeLog = session.exchanges.map((ex, i) =>
+    `${i + 1}. User: "${ex.userText}" → ${targetName}: "${ex.response.translation}"${ex.response.correction ? ` (corrected: "${ex.response.correction}")` : ''}`
+  ).join('\n');
+
+  const msg = await anthropic.messages.create({
+    model: 'claude-sonnet-4-5',
+    max_tokens: 1000,
+    system: `Summarize a solo language practice session for a ${nativeName} speaker learning ${targetName}. Write your response in ${nativeName}.
+
+Return:
+- total_exchanges: number of turns
+- words_learned: the most important vocabulary cards from the session (up to 10)
+- phrases_practiced: list of key ${targetName} phrases the user encountered (up to 8)
+- tips: 2-3 practical study tips based on what the user practiced
+
+Return ONLY valid JSON — no markdown fences.
+
+Response schema:
+{"total_exchanges":<number>,"words_learned":[{"word":"<${targetName}>","phonetic":"<guide>","translation":"<${nativeName}>","example_sentence":"<${targetName}>","example_translation":"<${nativeName}>"}],"phrases_practiced":["<phrase>"],"tips":["<tip>"]}`,
+    messages: [{
+      role: 'user',
+      content: `Session log (${session.exchanges.length} exchanges):\n${exchangeLog}\n\nAll vocabulary encountered:\n${JSON.stringify(session.allVocab)}`,
+    }],
+  });
+
+  const content = msg.content[0];
+  if (content.type !== 'text') throw new Error('Unexpected Claude response type');
+  return parseClaudeJson<SoloSummaryResult>(content.text);
+}
+
+function handleJoinSolo(client: BabelClient, msg: JoinSoloMsg) {
+  const session: SoloSession = {
+    userId: client.userId,
+    nativeLang: msg.native_lang,
+    targetLang: msg.target_lang,
+    exchanges: [],
+    allVocab: [],
+    difficulty: 'beginner',
+    recentPrompts: [],
+  };
+  soloSessions.set(client.userId, session);
+  send(client, { type: 'solo_joined', session_id: client.userId });
+  console.log(`[solo] ${client.userId} started ${langName(msg.native_lang)} → ${langName(msg.target_lang)}`);
+}
+
+async function handleSoloUtterance(client: BabelClient, msg: SoloUtteranceMsg) {
+  const session = soloSessions.get(client.userId);
+  if (!session) {
+    send(client, { type: 'error', message: 'No active solo session' });
+    return;
+  }
+
+  send(client, { type: 'state_change', user: client.userId, state: 'thinking' });
+
+  try {
+    const result = await soloTutor(session, msg.original_text, msg.attempted_target ?? false);
+
+    const exchange: SoloExchange = {
+      userText: msg.original_text,
+      attemptedTarget: msg.attempted_target ?? false,
+      response: result,
+    };
+    session.exchanges.push(exchange);
+    session.allVocab.push(...(result.vocab_cards ?? []));
+
+    if (session.exchanges.length >= 12) session.difficulty = 'advanced';
+    else if (session.exchanges.length >= 5) session.difficulty = 'intermediate';
+
+    send(client, { type: 'solo_response', ...result });
+  } catch (err) {
+    console.error(`[solo] tutor error for ${client.userId}:`, err);
+    send(client, { type: 'error', message: 'Tutor error — try again' });
+  }
+
+  send(client, { type: 'state_change', user: client.userId, state: 'idle' });
+}
+
+async function handleSoloEnd(client: BabelClient) {
+  const session = soloSessions.get(client.userId);
+  if (!session) {
+    send(client, { type: 'error', message: 'No active solo session' });
+    return;
+  }
+
+  send(client, { type: 'solo_ended' });
+  soloSessions.delete(client.userId);
+  console.log(`[solo] ${client.userId} ended session (${session.exchanges.length} exchanges)`);
+}
+
+const PROMPT_CATEGORIES = [
+  'greetings and farewells',
+  'ordering food or drinks',
+  'asking for directions',
+  'shopping and prices',
+  'weather and seasons',
+  'family and relationships',
+  'hobbies and free time',
+  'travel and transportation',
+  'feelings and emotions',
+  'time and schedules',
+  'workplace and jobs',
+  'health and body',
+  'compliments and politeness',
+  'making plans with friends',
+  'describing your surroundings',
+  'expressing preferences',
+  'apologizing or excusing yourself',
+  'talking about food and cooking',
+  'emergency and help phrases',
+  'numbers, counting, and math',
+  'animals and nature',
+  'sports and exercise',
+  'music and entertainment',
+  'colors, shapes, and sizes',
+  'asking for opinions',
+];
+
+async function handleSoloRequestPrompt(client: BabelClient) {
+  const session = soloSessions.get(client.userId);
+  if (!session) {
+    send(client, { type: 'error', message: 'No active solo session' });
+    return;
+  }
+
+  const nativeName = langName(session.nativeLang);
+  const targetName = langName(session.targetLang);
+  const exchangeCount = session.exchanges.length;
+  const difficultyHint = exchangeCount < 5 ? 'beginner' : exchangeCount < 12 ? 'intermediate' : 'advanced';
+
+  const recentPhrases = session.recentPrompts.slice(-15);
+  const category = PROMPT_CATEGORIES[Math.floor(Math.random() * PROMPT_CATEGORIES.length)];
+  const wordCount = Math.floor(Math.random() * 4) + 3; // 3-6 words
+
+  try {
+    const msg = await anthropic.messages.create({
+      model: 'claude-sonnet-4-5',
+      max_tokens: 400,
+      temperature: 1,
+      system: `You are a language tutor. Generate a single practice phrase in ${targetName} for a ${nativeName} speaker to try saying aloud.
+
+Difficulty: ${difficultyHint}. Category: ${category}. Aim for roughly ${wordCount} words.
+${recentPhrases.length > 0 ? `You MUST NOT repeat or closely rephrase any of these previously given phrases:\n${recentPhrases.map((p, i) => `${i + 1}. "${p}"`).join('\n')}\nGenerate something COMPLETELY different — different vocabulary, different structure, different topic.` : ''}
+${session.allVocab.length > 0 ? `The user has learned these words: ${JSON.stringify(session.allVocab.map(v => v.word).slice(-20))}. Optionally weave one in.` : ''}
+
+RULES:
+- No proper names or personal names.
+- Keep it generic and universally useful.
+- Max ~8 words.
+- Be creative and surprising — avoid the most obvious/common phrase for this category.
+
+Return ONLY valid JSON:
+{"phrase":"<phrase in ${targetName}>","phonetic":"<pronunciation guide for ${nativeName} speaker>","translation":"<translation in ${nativeName}>","context":"<one-line situational hint, e.g. 'greeting someone' or 'ordering at a café'>"}`,
+      messages: [{ role: 'user', content: `Give me a random ${difficultyHint}-level phrase about "${category}" in ${targetName}. Surprise me — pick something unusual, not the first thing that comes to mind.` }],
+    });
+
+    const content = msg.content[0];
+    if (content.type !== 'text') throw new Error('Unexpected response');
+    const result = parseClaudeJson<{ phrase: string; phonetic: string; translation: string; context: string }>(content.text);
+    session.recentPrompts.push(result.phrase);
+    send(client, { type: 'solo_prompt', ...result });
+  } catch (err) {
+    console.error(`[solo] prompt generation error:`, err);
+    send(client, { type: 'error', message: 'Could not generate prompt' });
   }
 }
 
@@ -543,6 +892,7 @@ function handleDisconnect(client: BabelClient) {
       }
     }
   }
+  soloSessions.delete(client.userId);
   clients.delete(client.userId);
   console.log(`[disconnect] ${client.userId}`);
 }
@@ -763,6 +1113,7 @@ const httpServer = createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
   const summaryMatch = url.pathname.match(/^\/rooms\/([^/]+)\/summary$/);
   const finalizeMatch = url.pathname.match(/^\/rooms\/([^/]+)\/finalize$/);
+  const lessonMatch = url.pathname.match(/^\/rooms\/([^/]+)\/lesson$/);
   const requestedLang = url.searchParams.get('lang') ?? 'en-US';
 
   try {
@@ -794,6 +1145,23 @@ const httpServer = createServer(async (req, res) => {
       res.end(JSON.stringify(payload));
       return;
     }
+    if (lessonMatch && req.method === 'GET') {
+      const targetLang = url.searchParams.get('target_lang') ?? '';
+      if (!targetLang) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'target_lang query parameter is required' }));
+        return;
+      }
+      const lesson = await handleLessonRequest(lessonMatch[1], requestedLang, targetLang);
+      if (!lesson) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'No transcript found for that room' }));
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(lesson));
+      return;
+    }
   } catch (err) {
     console.error('HTTP handler error:', err);
     res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -823,12 +1191,16 @@ wss.on('connection', (ws) => {
 
     try {
       switch (msg.type) {
-        case 'join_room':     await handleJoin(client, msg); break;
-        case 'utterance':     await handleUtterance(client, msg); break;
-        case 'state_change':  handleStateChange(client, msg); break;
-        case 'device_ping':   handleDevicePing(client, msg); break;
-        case 'request_peers': handleRequestPeers(client); break;
-        case 'update_lang':   handleUpdateLang(client, msg); break;
+        case 'join_room':       await handleJoin(client, msg); break;
+        case 'utterance':       await handleUtterance(client, msg); break;
+        case 'state_change':    handleStateChange(client, msg); break;
+        case 'device_ping':     handleDevicePing(client, msg); break;
+        case 'request_peers':   handleRequestPeers(client); break;
+        case 'update_lang':     handleUpdateLang(client, msg); break;
+        case 'join_solo':       handleJoinSolo(client, msg); break;
+        case 'solo_utterance':  await handleSoloUtterance(client, msg); break;
+        case 'solo_end':        await handleSoloEnd(client); break;
+        case 'solo_request_prompt': await handleSoloRequestPrompt(client); break;
       }
     } catch (err) {
       console.error(`Handler error (${msg.type}):`, err);
@@ -845,9 +1217,10 @@ wss.on('connection', (ws) => {
   send(client, { type: 'connected', user_id: userId });
 });
 
-httpServer.listen(PORT, () => {
-  console.log(`Babel server listening on ws://localhost:${PORT}`);
-  console.log(`Health: http://localhost:${PORT}/health`);
+httpServer.listen(PORT, HOST, () => {
+  console.log(`Babel server listening on ws://${HOST}:${PORT}`);
+  console.log(`ESP bridge target: ws://172.20.10.3:${PORT}`);
+  console.log(`Health: http://172.20.10.3:${PORT}/health`);
   if (!process.env.ANTHROPIC_API_KEY) {
     console.warn('WARNING: ANTHROPIC_API_KEY not set — translation will fail');
   }
