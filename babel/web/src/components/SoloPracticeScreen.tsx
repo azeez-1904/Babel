@@ -181,7 +181,7 @@ export function SoloPracticeScreen({ myUserId, onLeave, send, onMessage }: Props
   const [vocabDrawerOpen, setVocabDrawerOpen] = useState(false);
   const [interimText, setInterimText] = useState('');
   const [noiseSuppress, setNoiseSuppress] = useState(false);
-  const [latestSuggestion, setLatestSuggestion] = useState<{
+  const [_latestSuggestion, _setLatestSuggestion] = useState<{
     text: string; translation: string; phonetic: string;
   } | null>(null);
   const [currentPrompt, setCurrentPrompt] = useState<PracticePrompt | null>(null);
