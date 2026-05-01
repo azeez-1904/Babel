@@ -1,19 +1,27 @@
 # Babel — Real-Time AI Translation Platform
 
-> Two people. Any two languages. Zero barriers.
+> Any room. Any language. Any input. Zero barriers.
 
-Babel is a real-time AI translation platform that lets people speak, text, or sign across language barriers — instantly. It uses Claude (Anthropic's AI) to translate speech and text in real time, preserving tone, dialect, and cultural nuance. No accounts, no downloads — just share a room code and start talking.
+---
+
+## Abstract
+
+Language barriers fragment human communication — in hospitals, classrooms, emergency situations, and everyday life. Babel is a real-time AI translation platform built to dissolve those barriers, regardless of how someone communicates. A single shared room can hold multiple participants using completely different input methods simultaneously: one person speaks aloud, another types on a phone, a third texts in from WhatsApp without ever opening a browser. Every message, regardless of its origin, is translated by Claude AI and delivered to every participant in their own language within seconds.
+
+Built at NJIT Hackathon, Babel explores a core idea: **a room is not a chat — it's a shared understanding**. The input method is an implementation detail. The language is an implementation detail. What matters is that meaning crosses the gap.
+
+The project also includes an experimental attempt at ASL (American Sign Language) recognition using Claude's vision API, representing a push toward making Babel accessible to users who cannot speak or type at all — signing into the same room as everyone else.
 
 ---
 
 ## What Babel Does
 
-When two people join the same room code:
+A Babel **room** is identified by a short 4-character code. Anyone who joins that code enters the same live conversation. The key insight is that participants don't all have to use the same interface — one person can be on the web app using voice, another using text, and a third texting from their iPhone via WhatsApp. They're all in the same room, and every message is translated for every participant in their own language.
 
-- **Person A** speaks (or types) in their language
-- Babel sends the text through Claude AI for translation
-- **Person B** hears (or reads) it in their own language — within seconds
-- Both sides see a live transcript with source language labels
+- **Person A** speaks in English via the web app
+- **Person B** types in Spanish from their phone browser
+- **Person C** texts in French from WhatsApp on their iPhone
+- Everyone sees and hears every message — translated, in real time
 
 This works across any language pair Claude supports — English ↔ Spanish, English ↔ Japanese, Arabic ↔ French, and hundreds more.
 
@@ -40,8 +48,8 @@ This uses Twilio's WhatsApp Sandbox for demo / development.
 ### Solo Practice Mode
 A single-user mode for language learners. Practice conversations with an AI partner in a target language. The AI adapts to your skill level and gives feedback on your responses.
 
-### ASL / Sign Language Mode (experimental)
-Uses Claude's vision capabilities to recognize American Sign Language from the webcam in real time. Signs are translated and spoken aloud for the other participant.
+### ASL / Sign Language Mode (experimental attempt)
+An attempt to extend Babel to users who cannot speak or type. This mode uses Claude's vision API to analyze webcam frames and recognize American Sign Language gestures, translating signs into text that gets spoken aloud for the other participant. It works for basic signs but real-time ASL recognition at scale is a hard problem — this is a proof-of-concept showing the direction, not a polished feature.
 
 ### ESP32 Hardware Mode (optional)
 A physical companion device (ESP32 microcontroller with an OLED or TFT screen) that connects to the room and displays an animated mascot reacting to the conversation state — bouncing when someone is speaking, pulsing while thinking, sleeping when idle.
@@ -53,6 +61,7 @@ A physical companion device (ESP32 microcontroller with an OLED or TFT screen) t
 | Feature | Details |
 |---|---|
 | Real-time translation | Sub-3-second turnaround via Claude Sonnet |
+| Mixed input rooms | Voice, text, and SMS users can all share the same room simultaneously |
 | Tone preservation | Preserves AAVE, slang, code-switching, formality |
 | Distress detection | Flags medical emergency keywords — shows a red alert banner |
 | Transcript | Full scrollable conversation history, downloadable as PDF |
@@ -61,6 +70,7 @@ A physical companion device (ESP32 microcontroller with an OLED or TFT screen) t
 | Room system | 4-character room codes, no sign-up needed |
 | Multi-platform | Works on desktop and mobile browsers |
 | SMS bridge | Join via WhatsApp without opening a browser |
+| ASL attempt | Experimental webcam sign-language recognition via Claude Vision |
 
 ---
 
