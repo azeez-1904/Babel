@@ -130,6 +130,24 @@ const soloSessions = new Map<string, SoloSession>();
 const smsClients = new Map<string, SmsClient>(); // phone → SmsClient
 const smsUserIds = new Map<string, string>();    // userId → phone
 
+// ─── Rate limiting ────────────────────────────────────────────────────────────
+// Max 10 messages per user per minute, cooldown 3s between messages
+const RATE_LIMIT_PER_MIN = 10;
+const RATE_COOLDOWN_MS = 3000;
+const userMessageTimes = new Map<string, number[]>();
+
+function isRateLimited(userId: string): boolean {
+  const now = Date.now();
+  const times = userMessageTimes.get(userId) ?? [];
+  const lastMsg = times.at(-1);
+  if (lastMsg && now - lastMsg < RATE_COOLDOWN_MS) return true;
+  const recent = times.filter(t => now - t < 60_000);
+  if (recent.length >= RATE_LIMIT_PER_MIN) return true;
+  recent.push(now);
+  userMessageTimes.set(userId, recent);
+  return false;
+}
+
 let userCounter = 0;
 function nextId() { return `u${++userCounter}`; }
 
@@ -751,6 +769,10 @@ async function handleUtterance(client: BabelClient, msg: UtteranceMsg) {
   if (!client.room || !client.lang) return;
   const room = rooms.get(client.room);
   if (!room) return;
+  if (isRateLimited(client.userId)) {
+    send(client, { type: 'error', message: 'Slow down — too many messages. Wait a moment.' });
+    return;
+  }
 
   const timestamp = Date.now();
   const translations: TranscriptTranslation[] = [];
@@ -932,6 +954,10 @@ async function handleFinalizeRequest(roomCode: string, targetLang: string) {
 async function handleSmsUtterance(phone: string, text: string) {
   const smsClient = smsClients.get(phone);
   if (!smsClient) return;
+  if (isRateLimited(smsClient.userId)) {
+    await sendSms(phone, 'Slow down — too many messages. Wait a moment.');
+    return;
+  }
 
   const { room: roomCode, lang, userId } = smsClient;
   const room = rooms.get(roomCode);
